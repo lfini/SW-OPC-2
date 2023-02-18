@@ -1,0 +1,78 @@
+Procedure python per la gestione delle osservazioni ad OPC. Versione 2
+
+Luca Fini (luca.fini@gmail.com) - febbraio 2023
+
+Codice previsto per python 3.8 e superiore
+
+
+ISTRUZIONI DI INSTALLAZIONE (Windows)
+========================================
+
+L'installazione consiste semplicemente nell'estrarre i files dall'archivio in
+una cartella dedicata ed eseguire:
+
+      setup.bat
+
+La procedura di installazione crea un collegamento sul desktop per il lancio
+del programma di controllo principale (logger.py)
+
+Dopo installazione la cartella può essere cancellata.
+
+
+ISTRUZIONI DI INSTALLAZIONE (Linux)
+========================================
+
+L'installazione consiste semplicemente nell'estrarre i files dall'archivio in
+una cartella dedicata.
+
+Occorre poi aggiungere il path del package opc a PYTHONPATH
+
+Le procedure possono poi essere eseguite specificando il relativo path
+
+=====================
+CONTENUTO del PACKAGE
+=====================
+
+./opc      - Vari moduli python utilizzati dalle procedure
+
+             Dipendenze: easygui, tkinter, pywin32, winshell
+
+             ascom.py: Supporto per protocollo ASCOM
+
+             astro.py: Implementazione di alcune funzioni di carattere astronomico (per
+                       evitare dipendenze da librerie esterne)
+
+             configure.py: Gestione file di configurazione
+
+             setup.py:     Procedura per installazione Windows
+
+             telecomm.py: Implementazione del protocollo LX200 per comunicazione con il
+                          telescopio. Può essere usato come procedura per l'invio manuale
+                          di comandi al telescopio (help: python telecomm.py -h)
+
+             webdav.py:   Supporto per protocollo WebDAV
+
+             widgets.py: definizione widget utilizzati per la GUI
+
+             ./icons/*:   Files per icone
+
+
+./dome   - Controllo movimenti cupola 
+
+./focus  - Procedura per il controllo del fuocheggiatore sul secondario
+
+./homer  - Programma per la guida del telescopio utilizzando le immagini scientifiche
+           e opzionalmente immagini da una camera ausiliaria.
+
+NOTA: Tutti i programmi richiedono un file di configurazione che viene creato automaticamente
+      al primo run, e può essere successivamente modificato
+
+
+ALTRE PROCEDURE DI SUPPORTO
+===========================
+
+link.bat:   Procedura per visualizzare le istruzioni di creazione del collegamento in
+            ambiente Windows
+
+setup.bat:  Procedura di lancio dell'installazione per Windows
+ 
