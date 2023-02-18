@@ -1,0 +1,114 @@
+Software per il controllo della cupola Gambato
+
+
+Luca Fini, dicembre 2022  (luca.fini@gmail.com)
+
+Descrizione fiiles:
+
+alpaca_test.py     - Cliente per test della API alpaca implementata in dome_ctrl.py
+dome_calib.py      - Procedura per la misura dei parametri di calibrazione
+dome_ctrl.py       - controller cupola, usabile come modulo o standalone
+dome_data.json     - file generato da dome_calib.py
+dome_dyn.json      - file generato da dome_calib.py
+dome_gui.py        - GUI per dome_ctrl.py. Non funzionante ancora e richiede vari moduli
+                     specifici per OPC
+domelogger.py      - sottomodulo di dome_ctrl.py
+dome_tools.py      - sottomodulo di dome_ctrl.py
+K8055D.dll         - DLL per scheda K8055 in windows. Versione: x64_v5.0.0.3
+k8055_simulator.py - simulatore di K8055 per tests in assenza di scheda K8055
+k8055_test.py      - procedura di test per scheda K8055
+
+
+NOTE SULLE SINGOLE PROCEDURE
+============================
+
+dome_calib.py
+-------------
+
+Da usare per misurare i parametri di calibrazione della cupola. Da usare prima di provare
+il controller (dome_ctrl.py) che utilizza i dati generati durante la calibrazione.
+
+Ha due modi di funzionamento: con e senza uso del microswitch di home. La modalità con
+uso del microswitch non è stata adeguatamente testata perché detto microswitch non
+è leggibile con la DLL della scheda K8055. Il microswitch funziona invece con la
+versione Linux del driver, ma i test sul campo sono stati fatti solo da Windows.
+
+Nel corso della calibrazione genera anche un grafico dei parametri dinamici (accelerazione
+e decelerazione) cosa per la quale richiede il modulo python matplotlib. Se il modulo
+non è installato la procedura funziona egualmente, senza la generazione del grafico che
+non è necesasrio per il controllo della cupola.
+
+
+dome_ctrl.py
+------------
+
+Modulo di controllo dei movimenti della cupola. Per uso in modo test può essere lanciato
+direttamente da prompt. In tal caso accetta semplici comandi da tastiera per le varie
+funzioni supportate.
+
+E' pensato per l'uso come modulo importato ad es. da una GUI. Un esempio di uso sta in
+dome_gui.py, che però al momento non è completa e che per funzionare richiede altri moduli
+sviluppati espicitamente per l'Osservatorio del Chianti e che al momento non sono inclusi.
+
+Durante il funzionamento mantiene attivi alcuni thread che implementano il loop di
+di controllo di posizione della cupola ricevendo comandi tramite la API definita
+(la cui documentazione si può generare con la funzione help() di python) o, se
+la relativa funzionalità è attivata, tramite comandi Alpaca.
+
+NOTA: il server Alpaca al momento non implementa il protocollo "discovery"
+
+Il modulo supporta anche il modo 'slave', ma richiede un 'plug-in' per l'interrogazione
+del telescopio. Per maggiori dettagli si veda il commento in testa al file dome_ctrl.py
+
+Durante il funzionamento il modulo genera informazioni di log in un file di nome logdome.log
+sulla directory che contiene i file python.
+
+
+k8055_test.py
+-------------
+
+Procedura di test per la scheda K8055. Consente di mandare comandi diretti alla scheda.
+
+ATTENZIONE: la procedura di test non fa controlli  di sicurezza sui comandi inviati, quindi
+            consente, ad esempio di chiudere contemporaneamente i relé di movimento destra
+            e sinistra, cosa che potrebbe danneggiare i motori!
+
+I seguenti valori di comandi sono stati determinati per la cupola ad OPC e dovrebbero essere
+validi per altre cupole Gambato (ma è bene verificare). 
+
+comando   descrizione
+
+  o 0     Apre comunicazione con scheda su canale 0
+
+  s 1     Chiude relé apertura portello
+  s 2     Chiude relé chiusura portello
+  s 3     Chiude relé di movimento a sinistra (antiorario)
+  s 4     Chiude relé di movimento a destra (orario)
+  s 5     Chiude relé Telescopio
+  s 6     Chiude relé CCD
+  s 7     Chiude relé Luce flat
+  s 8     Chiude relé Luce cupola
+
+          Nota: i comandi "c <n>" aprono il relativo relé
+
+  rc 1    Lettura contatore encoder
+
+  r 5     Lettura canale digitale del microswitch di homing
+
+*************************************************************************************
+NOTA: se gli indirizzi non coincidono occorre modificare le corrispondenti costanti
+      nel file: dome_tools.py
+*************************************************************************************
+
+
+alpaca_test.py
+--------------
+
+Semplice procedura che utilizza il modulo python alpyca per inviare una serie di comandi
+al server Alpaca implementato in dome_ctrl.py.
+
+dome_ctrl.py deve essere lanciato con l'opzione "-a" per attivare il server Alpaca.
+
+per l'uso vedere: python alpaca_test.py -h
+
+NOTA: il test è molto limitato e non copre tutte le funzioni supportate dalla API
