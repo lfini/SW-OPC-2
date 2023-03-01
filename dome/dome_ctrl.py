@@ -23,12 +23,13 @@ where:
 
 # The module must implement four functions:
 
-# tel_simul()    - optionally called once at beginning of operations (prior of
-#                  tel_start) to enable telescope simulation mode. It can be a no-op
-#                  function if simulation mode is not provided.
-
-# tel_start(dbg) - called once at beginning of operations to enable the communication
-#                  with the telescope. The argument enables debug output
+# tel_start(logger=None, simul=False) - called once at beginning of operations to
+#                  enable the communication with the telescope.
+#                  logger - if provided, must be an object providing two methods:
+#                           .info(msg:str) and .error(msg:str)
+#                  simul - if True, enables telescope simulation mode for offline
+#                          testing.
+#                  Both arguments can be ignored in the implementation
 
 # tel_stop()     - called once, at the end of operations, to stop the communication
 #                  with the telescope
@@ -48,6 +49,7 @@ where:
 import sys
 import os
 import time
+from datetime import datetime
 import json
 from threading import Thread, Lock
 
@@ -63,39 +65,32 @@ from dome_tools import *     #pylint: disable=W0401,W0614
 
 from k8055_simulator import K8055Simulator
 
-# the following lines are required to check if the code is integrated with the
-# OPC software environment.
-# The controller can be used standalone, in wich case the import fails silently
+THIS_DIR = os.path.abspath(os.path.dirname(__file__))
+sys.path.insert(0, os.path.abspath(os.path.join(THIS_DIR, "..")))
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-try:
-    from opc import opclogger as logger
+# pylint: disable=C0413
+try:                               # Try importing local tel_sampler
+    import tel_sampler as ts
 except ImportError:
-    import domelogger as logger
+    _TEL_SAMPLER = False
 else:
-    _OPCLOGGER = True
-
-_TEL_SAMPLER = False
-
-#try:                                    # Try importing tel_sampler from opc environment
-#    from opc import tel_sampler as ts
-#except ImportError:
-#    _TEL_SAMPLER = False
-#else:
-#    _TEL_SAMPLER = True
+    _TEL_SAMPLER = True
 
 if not _TEL_SAMPLER:
-    try:                               # Try importing local tel_sampler
-        import tel_sampler as ts
+    try:                                    # Try importing tel_sampler from opc environment
+        from opc import tel_sampler as ts
     except ImportError:
         _TEL_SAMPLER = False
     else:
         _TEL_SAMPLER = True
 
-THIS_DIR = os.path.abspath(os.path.dirname(__file__))
 DLL_PATH = os.path.join(THIS_DIR, 'K8055D.dll')
 
-LOGSIZEMAX = 5000000   # Hint on max size of log file in bytes
+THISDIR = os.path.abspath(os.path.dirname(__file__))
+
+LOGFILENAME = os.path.join(THISDIR, 'logdome.log')
+LOGFILEBACK = os.path.join(THISDIR, 'logdome.bck')
+LOGSIZEMAX = 10000000
 
 if sys.platform == 'linux':
     import pyk8055
@@ -117,19 +112,19 @@ DEBUG_LOCK = False    # set to true to enable deadlock debugging mode
 _PULSE_TIME = 1       # Duration of pulsed relais for open/close shutter (sec)
 _SAMPLE_PERIOD = 1    # period of position logging
 
-_ALPACA_THREAD_ERROR = 'Alpaca server thread did not start'
-_ALREADY_RUNNING = 'Server is running'
-_CANT_EXECUTE = 'Cannot execute command'
-_CANT_SAVE_STATUS = 'Cannot save dome status'
-_DOME_THREAD_ERROR = 'Dome controller thread did not start'
+_ALPACA_THREAD_ERROR = 'Dome - Alpaca server thread did not start'
+_ALREADY_RUNNING = 'Dome - server is running'
+_CANT_EXECUTE = 'Dome - cannot execute command'
+_CANT_SAVE_STATUS = 'Dome - cannot save dome status'
+_DOME_THREAD_ERROR = 'Dome - controller thread did not start'
 _NA = 'N.A.'
-_NO_DOME_DATA = 'Dome calibration data file missing'
+_NO_DOME_DATA = 'Dome - calibration data file missing'
 _NO_ERROR = ''
-_TEL_OK = 'Azimuth from tel. OK'
-_UNCONNECTED = 'Server not connected'
-_UNCONFIGURED = 'Configuration parameter missing'
-_UNIMPLEMENTED = 'Function not yet implemented'
-_VALUE_ERROR = 'Value error'
+_TEL_OK = 'Dome - azimuth from tel. OK'
+_UNCONNECTED = 'Dome - server not connected'
+_UNCONFIGURED = 'Dome - configuration parameter missing'
+_UNIMPLEMENTED = 'Dome - function not yet implemented'
+_VALUE_ERROR = 'Dome - value error'
 
 _N_SWITCHES = 4
 
@@ -225,10 +220,9 @@ class _GB:                  # pylint: disable=R0903
                          #### Housekeeping
     alpaca = None        # Thread running Alpaca server
     al_server = None     # HTTPserver for Alpaca
-    alplog = None        # Logger for alpaca mode
     al_transid = 1       # Alpaca server transaction id
     dc_debug = False     # Debug mode for dome controller
-    domlog = None        # Main logger
+    logger = None        # Main logger
     handle = HANDLE
     data_file = ''       # name of dome data file
     ipport = 0           # IP port for Alpaca server
@@ -294,9 +288,42 @@ class _STAT:                  # pylint: disable=R0903
     movstat = None        # Movment status:
     targetaz = -1         # Current target azimnuth (degrees)
 
+class _NoLogger:
+    'dummy logger'
+    def info(self, _unused):
+        'do not record a log info'
+    def error(self, _unused):
+        'do not record a log error'
+
+class _Logger:
+    'standalone logger'
+    def __init__(self):
+        if os.path.exists(LOGFILENAME):
+            logsize = os.stat(LOGFILENAME).st_size
+            if logsize > LOGSIZEMAX:
+                os.replace(LOGFILENAME, LOGFILEBACK)
+        self.logfile = open(LOGFILENAME, 'a', encoding='utf8')  # pylint: disable=R1732
+        self.info(f'Logger - logging to file: {LOGFILENAME}')
+
+    def info(self, msg):
+        'record a log info'
+        if self.logfile:
+            tstamp = datetime.now().isoformat(sep=' ', timespec='milliseconds')
+            print(tstamp, 'Info:', msg, file=self.logfile)
+        if _GB.dc_debug:
+            print('DBG>', 'Info:', msg)
+
+    def error(self, msg):
+        'record a log error'
+        if self.logfile:
+            tstamp = datetime.now().isoformat(sep=' ', timespec='milliseconds')
+            print(tstamp, 'Error:', msg, file=self.logfile)
+        if _GB.dc_debug:
+            print('DBG>', 'Error:', msg)
+
 def _sample(cnt):
     'Record periodic status'
-    _GB.domlog.info(f'azh: {_GB.domeaz}, tgt: {_GB.targetaz}, cnt: {cnt} '\
+    _GB.logger.info(f'Dome - azh: {_GB.domeaz}, tgt: {_GB.targetaz}, cnt: {cnt} '\
                     f'dir: {_GB.direct}, stat: {_GB.movstat}, '\
                     f'slave: {_GB.isslave}, tel: {_GB.telstat}')
 
@@ -334,11 +361,11 @@ def _ang_dist(ang1, ang2):
 
 def _start_lk(direct, tstep=None):
     'Start movement (to protect with lock)'
-    _GB.domlog.info(f'_start_lk({direct}, {tstep})')
+    _GB.logger.info(f'Dome - _start_lk({direct}, {tstep})')
     if not _GB.handle:
         return _UNCONNECTED
     if _GB.movstat != IDLE:
-        _GB.domlog.error(_CANT_EXECUTE)
+        _GB.logger.error(_CANT_EXECUTE)
         return _CANT_EXECUTE
     safe_clear_counter(_GB.handle)
     _GB.saveaz = _GB.domeaz
@@ -356,7 +383,7 @@ def _start_lk(direct, tstep=None):
 
 def _stop_lk(reason):
     'stop movement (to protect with lock)'
-    _GB.domlog.info(f'_stop_lk({reason})')
+    _GB.logger.info(f'Dome - _stop_lk({reason})')
     _GB.handle.ClearDigitalChannel(_GB.direct)         # stop the motor
     _GB.stopcn = _GB.handle.ReadCounter(ENCODER)       # get current count
     _GB.movstat = STOPPING
@@ -366,7 +393,7 @@ def _check_stopped():
     'detect motion end'
     with _GB.dome_lock:
         cnt = _GB.handle.ReadCounter(ENCODER)
-        _GB.domlog.info(f'_check_stopped. cnt={cnt}')
+        _GB.logger.info(f'Dome - _check_stopped. cnt={cnt}')
         if cnt == _GB.stopcn:
             if _GB.direct == LEFT_MOVE:
                 _GB.domeaz = int((_GB.saveaz-cnt)%_GB.n360)
@@ -377,7 +404,7 @@ def _check_stopped():
             _GB.direct = 0
             _GB.movstat = IDLE
             _GB.stopcn = -1
-            _GB.domlog.info('_check_stopped: stop detected')
+            _GB.logger.info('Dome - _check_stopped: stop detected')
             return
         _GB.stopcn = cnt
         _after(_GB.tsafe, _check_stopped)
@@ -390,7 +417,7 @@ def _end_step():
 
 def _dome_loop():                          #pylint: disable=R0912,R0915
     'Dome status update loop (executed as Thread)'
-    _GB.domlog.info('dome control loop starting')
+    _GB.logger.info('Dome - control loop starting')
     pollsec = _GB.tpoll
     _GB.handle.ClearAllDigital()     # set a known status
     while _GB.loop:
@@ -421,7 +448,7 @@ def _dome_loop():                          #pylint: disable=R0912,R0915
                     else:
                         _GB.targetaz = _to_encoder(azh)
                 if _GB.telstat != _GB.telsave:
-                    _GB.domlog.info(f'tel. status now: {_GB.telstat}')
+                    _GB.logger.info(f'Dome - tel. status now: {_GB.telstat}')
                     _GB.telsave = _GB.telstat
                 if _GB.targetaz < 0:
                     dst, adst = 0.0, 0.0
@@ -431,12 +458,13 @@ def _dome_loop():                          #pylint: disable=R0912,R0915
                 if _GB.movstat == IDLE:
                     if adst > _GB.nstop:
                         direct = RIGHT_MOVE if dst > 0 else LEFT_MOVE
-                        _GB.domlog.info(f'Start movement (dist={dst})')
+                        _GB.logger.info(f'Dome - Start movement (dist={dst})')
                         _start_lk(direct)
                     elif adst > _GB.maxerr:
                         direct = RIGHT_MOVE if dst > 0 else LEFT_MOVE
                         pls = _GB.ptable[adst]
-                        _GB.domlog.info(f'Stepping to final position (dist={dst}, pulse={pls:.2f})')
+                        _GB.logger.info('Dome - Stepping to final position '
+                                        f'(dist={dst}, pulse={pls:.2f})')
                         _start_lk(direct, tstep=pls)
                     else:
                         _GB.targetaz = -1
@@ -451,7 +479,7 @@ def _dome_loop():                          #pylint: disable=R0912,R0915
         _GB.idletime = nextpoll/pollsec
         if nextpoll>0:
             time.sleep(nextpoll)
-    _GB.domlog.info('dome control loop terminated')
+    _GB.logger.info('Dome - control loop terminated')
 
 ###### API support functions
 
@@ -461,7 +489,7 @@ def _to_encoder(azh):
 
 def _start_pulse(n_rele, p_time):
     'Start a pulsed rele'
-    _GB.domlog.info(f'_start_pulse({n_rele}, {p_time})')
+    _GB.logger.info(f'Dome - _start_pulse({n_rele}, {p_time})')
     if not _GB.handle:
         return _UNCONNECTED
     _GB.handle.SetDigitalChannel(n_rele)
@@ -470,17 +498,17 @@ def _start_pulse(n_rele, p_time):
 
 def _end_pulse(n_rele):
     'close relais after pulse period'
-    _GB.domlog.info(f'_end_pulse({n_rele})')
+    _GB.logger.info(f'Dome - _end_pulse({n_rele})')
     _GB.handle.ClearDigitalChannel(n_rele)
 
 def _slew_to(val):
     'Go to azimuth (in encoder units)'
-    _GB.domlog.info(f'_slew_to({val})')
+    _GB.logger.info(f'Dome - _slew_to({val})')
     if not _GB.handle:
         return _UNCONNECTED
     with _GB.dome_lock:
         if _GB.isslave or _GB.movstat != IDLE:
-            _GB.domlog.error(_CANT_EXECUTE)
+            _GB.logger.error(_CANT_EXECUTE)
             return _CANT_EXECUTE
         _GB.targetaz = val
     return _NO_ERROR
@@ -491,27 +519,27 @@ def _set_shut_stat(val):
 
 def _log_status():
     'Print status variables'
-    _GB.domlog.info('Current status')
-    _GB.domlog.info(f'  domeaz: {_GB.domeaz}')
-    _GB.domlog.info(f'  hoffset: {_GB.hoffset}')
-    _GB.domlog.info(f'  maxerr: {_GB.maxerr}')
-    _GB.domlog.info(f'  n180: {_GB.n180}')
-    _GB.domlog.info(f'  n360: {_GB.n360}')
-    _GB.domlog.info(f'  nstart: {_GB.nstart}')
-    _GB.domlog.info(f'  nstop: {_GB.nstop}')
-    _GB.domlog.info(f'  parkaz: {_GB.parkaz}')
-    _GB.domlog.info(f'  ptable: {_GB.ptable}')
-    _GB.domlog.info(f'  shuttime: {_GB.shuttime}')
-    _GB.domlog.info(f'  t360: {_GB.t360}')
-    _GB.domlog.info(f'  targetaz: {_GB.targetaz}')
-    _GB.domlog.info(f'  todeg: {_GB.todeg}')
-    _GB.domlog.info(f'  toenc: {_GB.toenc}')
-    _GB.domlog.info(f'  tpoll: {_GB.tpoll}')
-    _GB.domlog.info(f'  tsafe: {_GB.tsafe}')
-    _GB.domlog.info(f'  tshort: {_GB.tshort}')
-    _GB.domlog.info(f'  tstart: {_GB.tstart}')
-    _GB.domlog.info(f'  tstop: {_GB.tstop}')
-    _GB.domlog.info(f'  vmax: {_GB.vmax}')
+    _GB.logger.info('Dome - current status')
+    _GB.logger.info(f'  domeaz: {_GB.domeaz}')
+    _GB.logger.info(f'  hoffset: {_GB.hoffset}')
+    _GB.logger.info(f'  maxerr: {_GB.maxerr}')
+    _GB.logger.info(f'  n180: {_GB.n180}')
+    _GB.logger.info(f'  n360: {_GB.n360}')
+    _GB.logger.info(f'  nstart: {_GB.nstart}')
+    _GB.logger.info(f'  nstop: {_GB.nstop}')
+    _GB.logger.info(f'  parkaz: {_GB.parkaz}')
+    _GB.logger.info(f'  ptable: {_GB.ptable}')
+    _GB.logger.info(f'  shuttime: {_GB.shuttime}')
+    _GB.logger.info(f'  t360: {_GB.t360}')
+    _GB.logger.info(f'  targetaz: {_GB.targetaz}')
+    _GB.logger.info(f'  todeg: {_GB.todeg}')
+    _GB.logger.info(f'  toenc: {_GB.toenc}')
+    _GB.logger.info(f'  tpoll: {_GB.tpoll}')
+    _GB.logger.info(f'  tsafe: {_GB.tsafe}')
+    _GB.logger.info(f'  tshort: {_GB.tshort}')
+    _GB.logger.info(f'  tstart: {_GB.tstart}')
+    _GB.logger.info(f'  tstop: {_GB.tstop}')
+    _GB.logger.info(f'  vmax: {_GB.vmax}')
 
 ##################################  Alpaca server section  ############################
 
@@ -768,7 +796,7 @@ def _alp_setswitch(handle, data):
         err = (_ALP_INVALID_VALUE[0], _ALP_INVALID_VALUE[1]+'missing State')
         _alp_reply_200(handle, data, err=err)
         return
-    enable = bool(enable)
+    enable = enable[0].startswith('T')
     ret = switch(nrele, enable)
     _alp_reply_action(handle, data, ret)
 
@@ -785,7 +813,7 @@ def _alp_setswitchval(handle, data):
         _alp_reply_200(handle, data, err=err)
         return
     try:
-        enable = int(enable)
+        enable = int(enable[0])
     except ValueError:
         err = (_ALP_INVALID_VALUE[0], _ALP_INVALID_VALUE[1]+enable)
         _alp_reply_200(handle, data, err=err)
@@ -806,12 +834,12 @@ _ALP_SWITCH_PUT_ACTS = {'action': lambda x, y: _alp_unsupported_put(x, y, 'Actio
                                                       # Switch specific actions
                         'setswitch': _alp_setswitch,
                         'setswitchname': lambda x, y: _alp_unsupported_put(x, y, 'SetSwitchName'),
-                        'setswitchval': _alp_setswitchval,
+                        'setswitchvalue': _alp_setswitchval,
                        }
 
 def _alp_reply_200(handle, params, value=None, err=_ALP_SUCCESS):
     'normal reply'
-    _GB.alplog.info(f'Reply 200: value={value}, err={err}')
+    _GB.logger.info(f'Alpaca - Reply 200: value={value}, err={err}')
     ret = {_ALP_CLIENT_ID: int(params[_ALP_CLIENT_ID][0]),
            _ALP_CLIENT_TRANS_ID: int(params[_ALP_CLIENT_TRANS_ID][0]),
            _ALP_SERVER_TRANS_ID: _GB.al_transid,
@@ -835,7 +863,7 @@ def _alp_reply_action(handle, params, ret):
 
 def _alp_reply_error(handle, code, msg):
     'error reply'
-    _GB.alplog.error(f'_alp_reply_error({code}, {msg})')
+    _GB.logger.error(f'Alpaca - _alp_reply_error({code}, {msg})')
     handle.send_response(code)
     handle.send_header('Content-type', 'text/plain')
     handle.end_headers()
@@ -851,7 +879,7 @@ class _AlpacaHandler(BaseHTTPRequestHandler):
         dev_type = path[3]
         dev_num = path[4]
         command = path[5]
-        _GB.alplog.info(f'GET request - Dev.type:{dev_type}, ' \
+        _GB.logger.info(f'Alpaca - GET request - Dev.type:{dev_type}, ' \
                    f'Dev.num:{dev_num}, Command:{command}, Params:{str(params)}')
         return dev_type, dev_num, command, params
 
@@ -869,7 +897,7 @@ class _AlpacaHandler(BaseHTTPRequestHandler):
         dev_type = path[3]
         dev_num = path[4]
         command = path[5]
-        _GB.alplog.info(f'PUT request - Dev.type:{dev_type},' \
+        _GB.logger.info(f'Alpaca - PUT request - Dev.type:{dev_type},' \
                    f'Dev.num:{dev_num}, Command:{command}, Data:{str(data)}')
         return dev_type, dev_num, command, data
 
@@ -912,12 +940,12 @@ class _AlpacaHandler(BaseHTTPRequestHandler):
     def do_get(self):
         'Reply to GET requests'
         if self.path == '/':     # reply to dummy request
-            _GB.alplog.info('Got dummy request')
+            _GB.logger.info('Alpaca - Got dummy request')
             self.send_response(200)
             self.send_header('Content-type', 'text/html')
             self.end_headers()
             self.wfile.flush()
-            _GB.alplog.info('Sent dummy reply')
+            _GB.logger.info('Alpaca - Sent dummy reply')
             return
         dev_type, dev_num, command, params = self._parse_get()
         if dev_num != '0':
@@ -959,7 +987,7 @@ def _run_alpaca(port):
     'Starts alpaca server. To be launched in a thread'
     _GB.ipport = port
     _GB.al_server = HTTPServer(('', port), _AlpacaHandler)
-    _GB.alplog.info(f'server started on port: {port}')
+    _GB.logger.info(f'Alpaca - server started on port: {port}')
     _GB.al_server.serve_forever()
 
 ##################################  API section  ############################
@@ -976,20 +1004,9 @@ def add_log(source, msg):
     mst: str
         Text of log message
 '''
-    _GB.domlog.info(f'[{source}] {msg}')
+    _GB.logger.info(f'Dome - [{source}] {msg}')
 
-def set_debug(enable):
-    '''
-    Enable/disable debug output
-
-    Parameters
-    ----------
-    enable : bool
-        True: enable debug / False: disable debug
-    '''
-    _GB.dc_debug = bool(enable)
-
-def start_server(ipport=0, debug=False,                    #pylint: disable=R0915, R0912
+def start_server(ipport=0, logger=False,                      #pylint: disable=R0915, R0912
                  sim_k8055=False, sim_tel=False):
     '''
     Launch dome control loop
@@ -999,8 +1016,10 @@ def start_server(ipport=0, debug=False,                    #pylint: disable=R091
     ipport : int
         If > 0 start alpaca server with given value as port number (default: 0)
 
-    debug : bool
-        enable debug debug mode (default: False)
+    logger : bool / object
+        if logger is bool: if False no logger is activated, if True use local logger.
+        if logger is an object it must provide two methods: logger.info(msg:str),
+        logger.error(msg:str) used to record logging messages. (default: False)
 
     sim_k8055 : bool
         use simulation code for k8055 board controller (default: False)
@@ -1013,20 +1032,23 @@ def start_server(ipport=0, debug=False,                    #pylint: disable=R091
     err : str
         Error message. No error is an empty string
     '''
-    _GB.domlog = logger.get_logger('Dome', debug)
-    _GB.domlog.info(f'API: start_server(Vers.{__version__}, {__date__})')
+    if isinstance(logger, bool):
+        logger = _Logger() if logger else _NoLogger()
+
+    _GB.logger = logger
+    _GB.logger.info(f'Dome API - start_server(Vers.{__version__}, {__date__})')
     if _GB.server is not None:
         return _ALREADY_RUNNING
     if sim_k8055:
-        _GB.domlog.info('using K8055 simulator')
+        _GB.logger.info('Dome - using K8055 simulator')
         _GB.handle = K8055Simulator()
     _GB.handle.OpenDevice(K8055_PORT)
     _GB.data_file = os.path.join(THIS_DIR, DOME_DATA_FILE)
-    _GB.domlog.info(f'getting dome data from: {_GB.data_file}')
+    _GB.logger.info(f'Dome - getting data from: {_GB.data_file}')
     if _TEL_SAMPLER:
-        _GB.domlog.info(f'tel_sampler is: {ts.__file__}')
+        _GB.logger.info(f'Dome - tel_sampler is: {ts.__file__}')
     else:
-        _GB.domlog.info('tel_sampler not available')
+        _GB.logger.info('Dome - tel_sampler not available')
     try:
         with open(_GB.data_file, encoding='utf8') as f_in:
             dome_data = json.load(f_in)
@@ -1059,10 +1081,8 @@ def start_server(ipport=0, debug=False,                    #pylint: disable=R091
     _GB.toenc = _GB.n360/360.
 
     if _TEL_SAMPLER:
-        _GB.domlog.info('starting tel_sampler')
-        if sim_tel:
-            ts.tel_simul()
-        ts.tel_start(debug)
+        _GB.logger.info('Dome - starting tel_sampler')
+        ts.tel_start(logger=logger, simul=sim_tel)
 
     with _GB.cmd_lock:                  # block other API calls
         _GB.server = Thread(target=_dome_loop)
@@ -1075,10 +1095,9 @@ def start_server(ipport=0, debug=False,                    #pylint: disable=R091
             return _DOME_THREAD_ERROR
         _log_status()
 
-    _GB.domlog.info(f'dome thread {_GB.server.native_id} running')
+    _GB.logger.info(f'Dome - thread {_GB.server.native_id} running')
     if ipport > 0:
-        _GB.alplog = logger.get_logger('Alpaca', debug)
-        _GB.alplog.info('starting server')
+        _GB.logger.info('Alpaca - starting server')
         _GB.alpaca = Thread(target=_run_alpaca, args=(ipport, ))
         _GB.alpaca.start()
         count = 10
@@ -1086,7 +1105,7 @@ def start_server(ipport=0, debug=False,                    #pylint: disable=R091
             time.sleep(0.1)
         if not _GB.alpaca.is_alive():
             return _ALPACA_THREAD_ERROR
-        _GB.alplog.info(f'thread {_GB.alpaca.native_id} running')
+        _GB.logger.info(f'Alpaca - thread {_GB.alpaca.native_id} running')
     return _NO_ERROR
 
 def stop_server():
@@ -1099,7 +1118,7 @@ def stop_server():
     err : str
         Error message. No error is an empty string
     '''
-    _GB.domlog.info('API: stop_server()')
+    _GB.logger.info('Dome API - stop_server()')
 
     with _GB.cmd_lock:                # Block all API calls
         with _GB.dome_lock:               # stop dome movement, if necessary
@@ -1112,12 +1131,12 @@ def stop_server():
                 break
             time.sleep(_GB.tpoll)
         if _GB.alpaca:
-            _GB.alplog.info('shutting down http server')
+            _GB.logger.info('Alpaca - shutting down http server')
             threadid = _GB.alpaca.native_id
             _GB.al_server.shutdown()
-            _GB.alplog.info('waiting thread to exit')
+            _GB.logger.info('Alpaca - waiting thread to exit')
             _GB.alpaca.join()
-            _GB.alplog.info(f'thread {threadid} terminated')
+            _GB.logger.info(f'Alpaca - thread {threadid} terminated')
         while True:                 # wait for timers to be executed
             with _AFTER.lock:
                 if not _AFTER.queue:
@@ -1126,17 +1145,17 @@ def stop_server():
         if _GB.server:
             threadid = _GB.server.native_id
             _GB.loop = False
-            _GB.domlog.info('waiting thread to exit')
+            _GB.logger.info('Dome - waiting thread to exit')
             _GB.server.join()        # wait server loop termination
-            _GB.domlog.info(f'dome thread {threadid} terminated')
+            _GB.logger.info(f'Dome - thread {threadid} terminated')
         _GB.server = None
     if _TEL_SAMPLER:
-        _GB.domlog.info('stopping tel_sampler')
+        _GB.logger.info('Dome - stopping tel_sampler')
         ts.tel_stop()
-    _GB.domlog.info('clearing all digital outputs')
+    _GB.logger.info('Dome - clearing all digital outputs')
     _GB.handle.ClearAllDigital()
     if isinstance(_GB.handle, K8055Simulator):   # stop K8055 simulator, if necessary
-        _GB.domlog.info('stop K8055 simulator loop')
+        _GB.logger.info('Dome - stop K8055 simulator loop')
         _GB.handle.stop()
     try:
         with open(_GB.data_file, encoding='utf8') as f_in:
@@ -1147,9 +1166,8 @@ def stop_server():
     dome_data['domeaz'] = _GB.domeaz
     with open(_GB.data_file, 'w', encoding='utf8') as f_out:
         json.dump(dome_data, f_out)
-    _GB.domlog.info('saved dome_data file: '+_GB.data_file)
-    _GB.domlog.info('end of stop_server() procedure')
-    logger.shut_logger()
+    _GB.logger.info('Dome - saved dome_data file: '+_GB.data_file)
+    _GB.logger.info('Dome - end of stop_server() procedure')
     return _NO_ERROR
 
 ############################################################  Dome control calls
@@ -1162,7 +1180,7 @@ def close_shutter():
     err : str
         Error message. No error is an empty string
     '''
-    _GB.domlog.info('API: close_shutter()')
+    _GB.logger.info('Dome API - close_shutter()')
     with _GB.cmd_lock:
         ret = _start_pulse(CLOSE_SHUTTER, _PULSE_TIME)
         _after(_GB.shuttime, lambda: _set_shut_stat(0))
@@ -1364,7 +1382,7 @@ def open_shutter():
         Error message. No error is an empty string
     '''
     with _GB.cmd_lock:
-        _GB.domlog.info('API: open_shutter()')
+        _GB.logger.info('Dome API - open_shutter()')
         ret = _start_pulse(OPEN_SHUTTER, _PULSE_TIME)
         _after(_GB.shuttime, lambda: _set_shut_stat(1))
     return ret
@@ -1378,7 +1396,7 @@ def park():
     err : str
         Error message. No error is an empty string
     '''
-    _GB.domlog.info('API: park')
+    _GB.logger.info('Dome API - park')
     with _GB.cmd_lock:
         if not _GB.handle:
             return _UNCONNECTED
@@ -1395,11 +1413,11 @@ def set_park():
     err : str
         Error message. No error is an empty string
     '''
-    _GB.domlog.info('API: set_park()')
+    _GB.logger.info('Dome API - set_park()')
     with _GB.cmd_lock:
         with _GB.dome_lock:
             if _GB.movstat != IDLE or _GB.isslave:
-                _GB.domlog.error(_CANT_EXECUTE)
+                _GB.logger.error(_CANT_EXECUTE)
                 return _CANT_EXECUTE
             _GB.parkaz = _GB.domeaz
     return _NO_ERROR
@@ -1413,18 +1431,18 @@ def set_slave():             # pylint: disable=R0911
     err : str
         Error message. No error is an empty string
     '''
-    _GB.domlog.info('API: set_slave()')
+    _GB.logger.info('Dome API - set_slave()')
     with _GB.cmd_lock:
         if not _GB.handle:
             return _UNCONNECTED
         if not _GB.canslave:
-            _GB.domlog.error(_CANT_EXECUTE)
+            _GB.logger.error(_CANT_EXECUTE)
             return _CANT_EXECUTE
         if _GB.isslave:
             return _NO_ERROR
         with _GB.dome_lock:
             if _GB.movstat != IDLE:
-                _GB.domlog.error(_CANT_EXECUTE)
+                _GB.logger.error(_CANT_EXECUTE)
                 return _CANT_EXECUTE
             _GB.isslave = True
         return _NO_ERROR
@@ -1444,7 +1462,7 @@ def slew_to_azimuth(azh):
     err : str
         Error message. No error is an empty string
     '''
-    _GB.domlog.info(f'API: slew_to_azimuth({azh})')
+    _GB.logger.info(f'Dome API - slew_to_azimuth({azh})')
     with _GB.cmd_lock:
         try:
             return _slew_to(_to_encoder(float(azh)))
@@ -1460,7 +1478,7 @@ def start_left():
     err : str
         Error message. No error is an empty string
     '''
-    _GB.domlog.info('API: start_left()')
+    _GB.logger.info('Dome API - start_left()')
     with _GB.cmd_lock:
         with _GB.dome_lock:
             return _start_lk(LEFT_MOVE, -1.0)
@@ -1474,7 +1492,7 @@ def start_right():
     err : str
         Error message. No error is an empty string
     '''
-    _GB.domlog.info('API: start_right()')
+    _GB.logger.info('Dome API - start_right()')
     with _GB.cmd_lock:
         with _GB.dome_lock:
             return _start_lk(RIGHT_MOVE, -1.0)
@@ -1493,7 +1511,7 @@ def step_left(tstep):
     err : str
         Error message. No error is an empty string
     '''
-    _GB.domlog.info(f'API: step_left({tstep})')
+    _GB.logger.info(f'Dome API - step_left({tstep})')
     if tstep <= 0:
         return _VALUE_ERROR
     with _GB.cmd_lock:
@@ -1514,7 +1532,7 @@ def step_right(tstep):
     err : str
         Error message. No error is an empty string
     '''
-    _GB.domlog.info(f'API: step_right({tstep})')
+    _GB.logger.info(f'Dome API - step_right({tstep})')
     if tstep <= 0:
         return _VALUE_ERROR
     with _GB.cmd_lock:
@@ -1530,7 +1548,7 @@ def stop():
     err : str
         Error message. No error is an empty string
     '''
-    _GB.domlog.info('API: stop()')
+    _GB.logger.info('Dome API - stop()')
     with _GB.cmd_lock:
         if not _GB.handle:
             return _UNCONNECTED
@@ -1559,7 +1577,7 @@ def switch(n_rele, enable=True):
     err : str
         Error message. No error is an empty string
     '''
-    _GB.domlog.info(f'API: switch({n_rele}, {enable})')
+    _GB.logger.info(f'Dome API - switch({n_rele}, {enable})')
     with _GB.cmd_lock:
         if not _GB.handle:
             return _UNCONNECTED
@@ -1591,7 +1609,7 @@ def sync_to_azimuth(azh):
     err : str
         Error message. No error is an empty string
     '''
-    _GB.domlog.info(f'API: sync_to_azimuth({azh:.2f})')
+    _GB.logger.info(f'Dome API - sync_to_azimuth({azh})')
     try:
         domeaz = _to_encoder(float(azh))
     except ValueError:
@@ -1601,7 +1619,7 @@ def sync_to_azimuth(azh):
             return _UNCONNECTED
         with _GB.dome_lock:
             if _GB.movstat != IDLE:
-                _GB.domlog.error(_CANT_EXECUTE)
+                _GB.logger.error(_CANT_EXECUTE)
                 return _CANT_EXECUTE
             _GB.domeaz = domeaz
     return _NO_ERROR
@@ -1672,7 +1690,7 @@ def _wait_stop():
 
 def _test_goto(deg):
     'Goto given position'
-    _GB.domlog.info(f'Test goto: {deg}')
+    _GB.logger.info(f'Test goto: {deg}')
     print(f'Slewing to {deg:.2f}°...', end=' ', flush=True)
     slew_to_azimuth(deg)
     stat = _wait_stop()
@@ -1716,7 +1734,6 @@ def _test_timed(nsecs, direct):
 def _stresstest():
     'Extensive test'
     print(_STRESS_HELP1)
-#    set_debug(False)
     _move_cmds()
     sync_to_azimuth(0)
     print(_STRESS_HELP2)
@@ -1731,7 +1748,6 @@ def _stresstest():
     print(_STRESS_HELP3)
     side = 'right' if dist < 0 else 'left'
     print(f'The dome should be {abs(dist):.2f}° to the {side} of the north position')
-#    set_debug(True)
 
 def _move_cmds(add_help=None, one_shot=False):      #pylint: disable=R0912
     'Accept movement commands'
@@ -1798,7 +1814,7 @@ def _test():                     #pylint: disable=R0912,R0915
         print(__doc__)
         sys.exit()
     ksimul = '-k' in sys.argv
-    dc_debug = '-d' in sys.argv
+    _GB.dc_debug = '-d' in sys.argv
     telsim = '-s' in sys.argv
     alport = _ALP_TEST_PORT if '-a' in sys.argv else 0
     print()
@@ -1812,7 +1828,7 @@ def _test():                     #pylint: disable=R0912,R0915
         print('** slave mode unavailable **')
     print()
     try:
-        ret = start_server(ipport=alport, debug=dc_debug,
+        ret = start_server(ipport=alport, logger=True,
                            sim_k8055=ksimul, sim_tel=telsim)
     except IOError:
         print(_NODEVICE)
@@ -1857,7 +1873,7 @@ def _test():                     #pylint: disable=R0912,R0915
             _print_err(ret)
             continue
         if ans[0] == 'f?':
-            ret = _GB.domlog.logname()
+            ret = _GB.logger.logname()
             print('Log file path:', ret)
             continue
         if ans[0] == 'p?':
