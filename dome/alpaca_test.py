@@ -2,7 +2,7 @@
 alpaca_test.py - Cliente per prova API alpaca. L.Fini, gen. 2023
 
 Uso:
-    python test:_alpaca.py [ip_addr]
+    python test_alpaca.py [ip_addr]
 
 Dove:
     ip_addr: indirizzo IP del server (default: localhost)
@@ -11,6 +11,7 @@ NOTA: Richiede l'installazione di "alpyca", modulo alpaca client per python
 '''
 
 import sys
+import time
 
 import alpaca.dome as ad
 import alpaca.switch as sw
@@ -27,63 +28,98 @@ except IndexError:
 PORT = 7777             # Valori eventualmente da modificare in accordo ai corrispondenti
 DEV_NUM = 0             # valori impostati in dome_ctrl.py
 
-STEP = True if '-s' in sys.argv else False
-
-def mprint(*args):
-    'print after prompt'
-    if STEP:
-        input('? ')
-    print(*args)
-
 dome = ad.Dome(f'{IP_ADDR}:{PORT}', DEV_NUM)
 switch = sw.Switch(f'{IP_ADDR}:{PORT}', DEV_NUM)
+
+def waitstop():
+    print('Waiting stop', end=' ', flush=True)
+    azh = dome.Azimuth
+    oks = 3
+    while oks:
+        print('.', end='', flush=True)
+        time.sleep(1)
+        nazh = dome.Azimuth
+        if azh == nazh:
+            oks -= 1
+        else:
+            oks = 3
+        azh = nazh
+    time.sleep(1)
+    print()
 
 dome.Connected = True
 print(f'Connected at {dome.Name}')
 print(dome.Description)
 print()
 print('Capabilities for', dome.Name)
-mprint(' - CanFindHome:', dome.CanFindHome)
-mprint(' - CanPark:', dome.CanPark)
-mprint(' - CanSetAltitude:', dome.CanSetAltitude)
-mprint(' - CanSetAzimuth:', dome.CanSetAzimuth)
-mprint(' - CanSetPark:', dome.CanSetPark)
-mprint(' - CanSetShutter:', dome.CanSetShutter)
-mprint(' - CanSlave:', dome.CanSlave)
-mprint(' - CanSyncAzimuth:', dome.CanSyncAzimuth)
-mprint()
+print(' - CanFindHome:', dome.CanFindHome)
+print(' - CanPark:', dome.CanPark)
+print(' - CanSetAltitude:', dome.CanSetAltitude)
+print(' - CanSetAzimuth:', dome.CanSetAzimuth)
+print(' - CanSetPark:', dome.CanSetPark)
+print(' - CanSetShutter:', dome.CanSetShutter)
+print(' - CanSlave:', dome.CanSlave)
+print(' - CanSyncAzimuth:', dome.CanSyncAzimuth)
+print()
 print('Dome Status:')
 print()
-#mprint(' - Altitude:', dome.Altitude)
-#mprint(' - AtHome:', dome.AtHome)
-mprint(' - AtPark:', dome.AtPark)
-mprint(' - Azimuth:', dome.Azimuth)
-mprint(' - ShutterStatus:', dome.ShutterStatus)
-mprint(' - Slaved:', dome.Slaved)
-mprint(' - Slewing:', dome.Slewing)
+#print(' - Altitude:', dome.Altitude)
+#print(' - AtHome:', dome.AtHome)
+print(' - AtPark:', dome.AtPark)
+print(' - Azimuth:', dome.Azimuth)
+print(' - ShutterStatus:', dome.ShutterStatus)
+print(' - Slaved:', dome.Slaved)
+print(' - Slewing:', dome.Slewing)
 print()
 print('Capabilities for', switch.Name)
 print()
-mprint(' - Max Switch:', switch.MaxSwitch)
-mprint(' - Max Switch Value')
+print(' - Max Switch:', switch.MaxSwitch)
+print(' - Max Switch Value')
 for nsw in range(1, switch.MaxSwitch+1):
     print(f'     Switch {nsw}:', switch.MaxSwitchValue(nsw))
-mprint(' - Min Switch Value')
+print(' - Min Switch Value')
 for nsw in range(1, switch.MaxSwitch+1):
     print(f'     Switch {nsw}:', switch.MinSwitchValue(nsw))
-mprint(' - Switch Step')
+print(' - Switch Step')
 for nsw in range(1, switch.MaxSwitch+1):
     print(f'     Switch {nsw}:', switch.SwitchStep(nsw))
-mprint(' - Can Write')
+print(' - Can Write')
 for nsw in range(1, switch.MaxSwitch+1):
     print(f'     Switch {nsw}:', switch.CanWrite(nsw))
-mprint(' - Switch Names')
+print(' - Switch Names')
 for nsw in range(1, switch.MaxSwitch+1):
     print(f'     Switch {nsw}:', switch.GetSwitchName(nsw))
-mprint(' - Switch Descriptions')
+print(' - Switch Descriptions')
 for nsw in range(1, switch.MaxSwitch+1):
     print(f'     Switch {nsw}:', switch.GetSwitchDescription(nsw))
-mprint(' - Switch Status')
+print(' - Switch Status')
 for nsw in range(1, switch.MaxSwitch+1):
     print(f'     Switch {nsw}:', switch.GetSwitch(nsw))
-
+print()
+print('Testing some commands')
+print(' - Azimuth:', dome.Azimuth)
+print('SlewToAzimuth(37.2) - returns:', dome.SlewToAzimuth(37.2))
+waitstop()
+print('SlewToAzimuth(0) - returns:', dome.SlewToAzimuth(0))
+waitstop()
+print('SetPark() - returns:', dome.SetPark())
+print('Park() - returns:', dome.Park())
+waitstop()
+print(' - Azimuth:', dome.Azimuth)
+print(' - Atpark:', dome.AtPark)
+print('Slaved = True')
+dome.Slaved = True
+print(' - Slaved:', dome.Slaved)
+print('SlewToAzimuth(10) - previsto errore')
+try:
+    dome.SlewToAzimuth(10)
+except Exception as exc:
+    print('Errore:', exc)
+waitstop()
+print('Slaved = False')
+dome.Slaved = False
+print(' - Slaved:', dome.Slaved)
+print('SlewToAzimuth(10)')
+dome.SlewToAzimuth(10)
+waitstop()
+print(' - Azimuth:', dome.Azimuth)

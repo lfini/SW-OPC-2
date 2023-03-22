@@ -104,7 +104,7 @@ elif sys.platform == 'win32':
 else:
     raise RuntimeError(f'Unsupported platform: {sys.platform}')
 
-__version__ = '1.2'
+__version__ = '1.3'
 __author__ = 'Luca Fini'
 __date__ = 'March 2023'
 
@@ -604,7 +604,7 @@ def _alp_shutterstatus(handle, params):
 
 def _alp_slavestatus(handle, params):
     'return slave status'
-    stat = False
+    stat = _GB.isslave
     _alp_reply_200(handle, params, value=stat)
 
 def _alp_slewstatus(handle, params):
@@ -612,35 +612,36 @@ def _alp_slewstatus(handle, params):
     dome_stat = get_status()
     _alp_reply_200(handle, params, value=dome_stat.direct != 0)
 
-def _alp_get_supp_actions(handle, params):
+def _alp_get_dome_actions(handle, params):
     'returns list of supported actions'
-    _alp_reply_200(handle, params, value=[])
+    value = list(_DOME_GET_ACTS.keys()) + list(_DOME_PUT_ACTS.keys())
+    _alp_reply_200(handle, params, value)
 
 #   COMMON GET ACTIONS   command      function
-_ALP_DOME_GET_ACTS = {'connected': _alp_getconnected,
-                      'description': lambda x, y: _alp_retvalue(x, y, _ALP_DOME_DESCR),
-                      'driverinfo': _alp_driverinfo,
-                      'driverversion': _alp_driverversion,
-                      'interfaceversion': lambda x, y: _alp_retvalue(x, y, _ALP_IF_VERS),
-                      'name': lambda x, y: _alp_retvalue(x, y, _ALP_DOME_NAME),
-                      'supportedactions': _alp_get_supp_actions,
+_DOME_GET_ACTS = {'connected': _alp_getconnected,
+                  'description': lambda x, y: _alp_retvalue(x, y, _ALP_DOME_DESCR),
+                  'driverinfo': _alp_driverinfo,
+                  'driverversion': _alp_driverversion,
+                  'interfaceversion': lambda x, y: _alp_retvalue(x, y, _ALP_IF_VERS),
+                  'name': lambda x, y: _alp_retvalue(x, y, _ALP_DOME_NAME),
+                  'supportedactions': _alp_get_dome_actions,
 #   DOME SPECIFIC GET ACTIONS
-                      'altitude': lambda x, y: _alp_unsupported_get(x, y, 'Altitude'),
-                      'athome': lambda x, y: _alp_unsupported_get(x, y, 'AtHome'),
-                      'atpark': _alp_atpark,
-                      'azimuth': _alp_getazimuth,
-                      'canfindhome': lambda x, y: _alp_retvalue(x, y, False),
-                      'canpark': lambda x, y: _alp_retvalue(x, y, True),
-                      'cansetaltitude': lambda x, y: _alp_retvalue(x, y, False),
-                      'cansetazimuth': lambda x, y: _alp_retvalue(x, y, True),
-                      'cansetpark': lambda x, y: _alp_retvalue(x, y, True),
-                      'cansetshutter': lambda x, y: _alp_retvalue(x, y, True),
-                      'canslave': lambda x, y: _alp_retvalue(x, y, _GB.canslave),
-                      'cansyncazimuth': lambda x, y: _alp_retvalue(x, y, True),
-                      'shutterstatus': _alp_shutterstatus,
-                      'slaved': _alp_slavestatus,
-                      'slewing': _alp_slewstatus,
-                      }
+                  'altitude': lambda x, y: _alp_unsupported_get(x, y, 'Altitude'),
+                  'athome': lambda x, y: _alp_unsupported_get(x, y, 'AtHome'),
+                  'atpark': _alp_atpark,
+                  'azimuth': _alp_getazimuth,
+                  'canfindhome': lambda x, y: _alp_retvalue(x, y, False),
+                  'canpark': lambda x, y: _alp_retvalue(x, y, True),
+                  'cansetaltitude': lambda x, y: _alp_retvalue(x, y, False),
+                  'cansetazimuth': lambda x, y: _alp_retvalue(x, y, True),
+                  'cansetpark': lambda x, y: _alp_retvalue(x, y, True),
+                  'cansetshutter': lambda x, y: _alp_retvalue(x, y, True),
+                  'canslave': lambda x, y: _alp_retvalue(x, y, _GB.canslave),
+                  'cansyncazimuth': lambda x, y: _alp_retvalue(x, y, True),
+                  'shutterstatus': _alp_shutterstatus,
+                  'slaved': _alp_slavestatus,
+                  'slewing': _alp_slewstatus,
+                  }
 
 def _alp_tbi(handle, data, command):
     'Returns TBI error'
@@ -686,7 +687,7 @@ def _alp_set_slaved(handle, data):
     if slaved is None:
         err = (_ALP_VALUE_NOT_SET[0], _ALP_VALUE_NOT_SET[1]+_ALP_SLAVED)
         _alp_reply_200(handle, data, err=err)
-    if slaved[0]:
+    if slaved[0] == 'True':
         ret = set_slave()
     else:
         ret = stop()
@@ -711,23 +712,23 @@ def _alp_synctoazimuth(handle, data):
     _alp_reply_action(handle, data, ret)
 
 #                    command      function                       # Common actions
-_ALP_DOME_PUT_ACTS = {'action': lambda x, y: _alp_unsupported_put(x, y, 'Action'),
-                      'commandblind': lambda x, y: _alp_unsupported_put(x, y, 'CommandBlind'),
-                      'commandbool': lambda x, y: _alp_unsupported_put(x, y, 'CommandBool'),
-                      'commandstring': lambda x, y: _alp_unsupported_put(x, y, 'CommandString'),
-                      'connected': _alp_setconnected,           # arg: Connected
+_DOME_PUT_ACTS = {'action': lambda x, y: _alp_unsupported_put(x, y, 'Action'),
+                  'commandblind': lambda x, y: _alp_unsupported_put(x, y, 'CommandBlind'),
+                  'commandbool': lambda x, y: _alp_unsupported_put(x, y, 'CommandBool'),
+                  'commandstring': lambda x, y: _alp_unsupported_put(x, y, 'CommandString'),
+                  'connected': _alp_setconnected,           # arg: Connected
                                                                  # Dome specific actions
-                      'abortslew': _alp_abortslew,
-                      'closeshutter': _alp_closeshutter,
-                      'findhome': _alp_find_home,
-                      'openshutter': _alp_open_shutter,
-                      'park': _alp_goto_park,
-                      'setpark': _alp_set_park,
-                      'slaved': _alp_set_slaved,                 # arg: 'Slaved'
-                      'slewtoaltitude': _alp_unsupported_put,
-                      'slewtoazimuth': _alp_slewtoazimuth,       # arg: 'Azimuth'
-                      'synctoazimuth': _alp_synctoazimuth,       # arg: 'Azimuth'
-                     }
+                  'abortslew': _alp_abortslew,
+                  'closeshutter': _alp_closeshutter,
+                  'findhome': _alp_find_home,
+                  'openshutter': _alp_open_shutter,
+                  'park': _alp_goto_park,
+                  'setpark': _alp_set_park,
+                  'slaved': _alp_set_slaved,                 # arg: 'Slaved'
+                  'slewtoaltitude': _alp_unsupported_put,
+                  'slewtoazimuth': _alp_slewtoazimuth,       # arg: 'Azimuth'
+                  'synctoazimuth': _alp_synctoazimuth,       # arg: 'Azimuth'
+                 }
 
 def _alp_getswitchid(params):
     'Returns a valid switch ID or None'
@@ -778,6 +779,11 @@ def _alp_getswitchvalue(handle, params):
     sw_stat = get_switch_states()
     _alp_retswitchpar(handle, params, sw_stat)
 
+def _alp_get_switch_actions(handle, params):
+    'returns list of supported actions'
+    value = list(_SWITCH_GET_ACTS.keys()) + list(_SWITCH_PUT_ACTS.keys())
+    _alp_reply_200(handle, params, value)
+
 #   COMMON ACTIONS     command         function
 _SWITCH_GET_ACTS = {'connected': _alp_getconnected,
                     'description': lambda x, y: _alp_retvalue(x, y, _ALP_SWITCH_DESCR),
@@ -785,7 +791,7 @@ _SWITCH_GET_ACTS = {'connected': _alp_getconnected,
                     'driverversion': _alp_driverversion,
                     'interfaceversion': lambda x, y: _alp_retvalue(x, y, _ALP_IF_VERS),
                     'name': lambda x, y: _alp_retvalue(x, y, _ALP_SWITCH_NAME),
-                    'supportedactions': _alp_get_supp_actions,
+                    'supportedactions': _alp_get_switch_actions,
 # SWITCH SPECIFIC ACTIONS
                     'maxswitch': lambda x, y: _alp_retvalue(x, y, _N_SWITCHES),
                     'canwrite': lambda x, y: _alp_retvalue(x, y, True),
@@ -840,16 +846,16 @@ def _alp_setswitchval(handle, data):
     _alp_reply_action(handle, data, ret)
 
 #   COMMON ACTIONS     command         function
-_ALP_SWITCH_PUT_ACTS = {'action': lambda x, y: _alp_unsupported_put(x, y, 'Action'),
-                        'commandblind': lambda x, y: _alp_unsupported_put(x, y, 'CommandBlind'),
-                        'commandbool': lambda x, y: _alp_unsupported_put(x, y, 'CommandBool'),
-                        'commandstring': lambda x, y: _alp_unsupported_put(x, y, 'CommandString'),
-                        'connected': _alp_setconnected,
+_SWITCH_PUT_ACTS = {'action': lambda x, y: _alp_unsupported_put(x, y, 'Action'),
+                    'commandblind': lambda x, y: _alp_unsupported_put(x, y, 'CommandBlind'),
+                    'commandbool': lambda x, y: _alp_unsupported_put(x, y, 'CommandBool'),
+                    'commandstring': lambda x, y: _alp_unsupported_put(x, y, 'CommandString'),
+                    'connected': _alp_setconnected,
                                                       # Switch specific actions
-                        'setswitch': _alp_setswitch,
-                        'setswitchname': lambda x, y: _alp_unsupported_put(x, y, 'SetSwitchName'),
-                        'setswitchvalue': _alp_setswitchval,
-                       }
+                    'setswitch': _alp_setswitch,
+                    'setswitchname': lambda x, y: _alp_unsupported_put(x, y, 'SetSwitchName'),
+                    'setswitchvalue': _alp_setswitchval,
+                   }
 
 def _alp_reply_200(handle, params, value=None, err=_ALP_SUCCESS):
     'normal reply'
@@ -885,6 +891,9 @@ def _alp_reply_error(handle, code, msg):
 
 class _AlpacaHandler(BaseHTTPRequestHandler):
     'Alpaca request handler'
+    def log_message(self, *args):
+        'to disable logging of requests'
+
     def _parse_get(self):
         'Parse URL for GET request'
         parsed = urlparse(self.path)
@@ -904,7 +913,6 @@ class _AlpacaHandler(BaseHTTPRequestHandler):
         datalen = int(self.headers.get('Content-Length', 0))
         if datalen > 0:
             data = self.rfile.read(datalen).decode('utf8')
-            print('form-data:', data)
             data = parse_qs(data)
         else:
             data = {}
@@ -917,7 +925,7 @@ class _AlpacaHandler(BaseHTTPRequestHandler):
 
     def do_get_dome(self, command, params):
         'Reply to GET requests for Dome'      ## table driven
-        func = _ALP_DOME_GET_ACTS.get(command)
+        func = _DOME_GET_ACTS.get(command)
         if func is None:
             err = (_ALP_INVALID_OPERATION[0], _ALP_INVALID_OPERATION[1]+command)
             _alp_reply_200(self, params, err=err)
@@ -935,7 +943,7 @@ class _AlpacaHandler(BaseHTTPRequestHandler):
 
     def do_put_dome(self, command, data):
         'Reply to PUT requests for Dome'       ## table driven'
-        func = _ALP_DOME_PUT_ACTS.get(command)
+        func = _DOME_PUT_ACTS.get(command)
         if func is None:
             err = (_ALP_INVALID_OPERATION[0], _ALP_INVALID_OPERATION[1]+command)
             _alp_reply_200(self, data, err=err)
@@ -944,7 +952,7 @@ class _AlpacaHandler(BaseHTTPRequestHandler):
 
     def do_put_switch(self, command, data):
         'Reply to PUT requests for Switch'       ## table driven'
-        func = _ALP_SWITCH_PUT_ACTS.get(command)
+        func = _SWITCH_PUT_ACTS.get(command)
         if func is None:
             err = (_ALP_INVALID_OPERATION[0], _ALP_INVALID_OPERATION[1]+command)
             _alp_reply_200(self, data, err=err)
