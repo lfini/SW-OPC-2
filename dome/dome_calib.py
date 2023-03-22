@@ -14,7 +14,7 @@ dove:
     -k:   usa simulatore k8055 (per test)
     -u:   usa parametri dinamici da file
 
-NOTA - la procedura genera due file con dati: dome_data.json e dome_dyn.json, 
+NOTA - la procedura genera due file con dati: dome_data.json e dome_dyn.json,
        ed un grafico: dome_dyn.png (tratto da dome_dyn.json)
 '''
 
@@ -504,12 +504,13 @@ def measure_dyn():             #pylint: disable=R0914
     stoptime0 = time.time()+DYN_HTIME
     stoptime1 = stoptime0+DYN_HTIME
     idx = 0
+    stopidx = 0
     while True:               # sample acceleration ramp
         tme = time.time()
-        if tme >= stoptime0:
+        if stopidx == 0 and tme >= stoptime0:
             stopidx = idx
             GLOB.handle.ClearDigitalChannel(RIGHT_MOVE)
-        elif tme >= stoptime1:
+        if tme >= stoptime1:
             break
         idx += 1
         tmes.append(tme)
@@ -519,7 +520,7 @@ def measure_dyn():             #pylint: disable=R0914
     cn0 = cnts[0]
     tmes = [(x-tm0) for x in tmes]
     cnts = [(x-cn0) for x in cnts]
-    GLOB.dyn_data = {'times': tmes, 'counts': cnts, 'nstop': stopidx, 'tpoll': tpoll}
+    GLOB.dyn_data.update({'times': tmes, 'counts': cnts, 'nstop': stopidx, 'tpoll': tpoll})
 
 def measure_one_step(tstep):
     'Misura spostamento corrispondente a step di data durata'

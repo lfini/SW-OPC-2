@@ -21,25 +21,28 @@ where:
 # In order to allow the operation in slave mode, an external module must be provided
 # with name: "tel_sampler.py"
 
-# The module must implement four functions:
+# The module must implement a function:
 
 # tel_start(logger=None, simul=False) - called once at beginning of operations to
-#                  enable the communication with the telescope.
-#                  logger - if provided, must be an object providing two methods:
-#                           .info(msg:str) and .error(msg:str)
-#                  simul - if True, enables telescope simulation mode for offline
-#                          testing.
-#                  Both arguments can be ignored in the implementation
+#                                       enable the communication with the telescope.
+#        Parameters:
+#              logger - if provided, must be an object providing two methods:
+#                       logger.info(msg:str) and logger.error(msg:str)
+#              simul  - if True, enables telescope simulation mode for offline
+#                       testing.
+#            Both arguments can be ignored in the implementation
 
-# tel_stop()     - called once, at the end of operations, to stop the communication
-#                  with the telescope
+#        Returns:
+#            TelSampler : object providing the following two methods
 
-# az_from_tel()  - called periodically (typically a few times per second). It must
-#                  return the azimuth required to the dome to be in front of the
-#                  telescope
+#               TelSampler.az_from_tel()  - called periodically (typically a few
+#                  times per second). It must return the azimuth required to the
+#                  dome to be in front of the telescope. If azimuth cannot be computed,
+#                  the returned value is set to -1.0
 #
-#                  if azimuth cannot be computed, the returned value is set to -1.0
-#
+#               TelSampler.tel_stop() - called once, at the end of operations
+#                  to stop the communication with the telescope
+
 # If the module is available in the import path it will be imported and used,
 # otherwise, the controller will not support the slave mode
 ####################################################################################
@@ -72,17 +75,17 @@ sys.path.insert(0, os.path.abspath(os.path.join(THIS_DIR, "..")))
 try:                               # Try importing local tel_sampler
     import tel_sampler as ts
 except ImportError:
-    _TEL_SAMPLER = False
+    TEL_SAMPLER = False
 else:
-    _TEL_SAMPLER = True
+    TEL_SAMPLER = True
 
-if not _TEL_SAMPLER:
+if not TEL_SAMPLER:
     try:                                    # Try importing tel_sampler from opc environment
         from opc import tel_sampler as ts
     except ImportError:
-        _TEL_SAMPLER = False
+        TEL_SAMPLER = False
     else:
-        _TEL_SAMPLER = True
+        TEL_SAMPLER = True
 
 DLL_PATH = os.path.join(THIS_DIR, 'K8055D.dll')
 
@@ -101,9 +104,9 @@ elif sys.platform == 'win32':
 else:
     raise RuntimeError(f'Unsupported platform: {sys.platform}')
 
-__version__ = '1.1'
+__version__ = '1.2'
 __author__ = 'Luca Fini'
-__date__ = 'February 2023'
+__date__ = 'March 2023'
 
 # pylint: disable=C0413
 
@@ -208,6 +211,7 @@ _ALP_VALUE = 'Value'
 
 _ALP_AZIMUTH = 'Azimuth'
 _ALP_CONNECTED = 'Connected'
+_ALP_SLAVED = 'Slaved'
 
 IDLE = 0          # Dome moving status
 STOPPING = 1
@@ -266,6 +270,8 @@ class _GB:                  # pylint: disable=R0903
     parkaz = None        # Park position (encoder steps)
     tpoll = None         # Main loop polling time (seconds)
 
+    tel_sampler = None   # Telescope sampler
+
 class _AFTER:                  # pylint: disable=R0903
     'support for timers'
     lock = Lock()
@@ -297,7 +303,8 @@ class _NoLogger:
 
 class _Logger:
     'standalone logger'
-    def __init__(self):
+    def __init__(self, debug):
+        self.debug = debug
         if os.path.exists(LOGFILENAME):
             logsize = os.stat(LOGFILENAME).st_size
             if logsize > LOGSIZEMAX:
@@ -310,7 +317,7 @@ class _Logger:
         if self.logfile:
             tstamp = datetime.now().isoformat(sep=' ', timespec='milliseconds')
             print(tstamp, 'Info:', msg, file=self.logfile)
-        if _GB.dc_debug:
+        if self.debug:
             print('DBG>', 'Info:', msg)
 
     def error(self, msg):
@@ -318,7 +325,7 @@ class _Logger:
         if self.logfile:
             tstamp = datetime.now().isoformat(sep=' ', timespec='milliseconds')
             print(tstamp, 'Error:', msg, file=self.logfile)
-        if _GB.dc_debug:
+        if self.debug:
             print('DBG>', 'Error:', msg)
 
 def _sample(cnt):
@@ -435,7 +442,7 @@ def _dome_loop():                          #pylint: disable=R0912,R0915
                     _sample(cnt)
                     _GB.tsample = tstart+_SAMPLE_PERIOD
                 if _GB.canslave:
-                    azh = ts.az_from_tel()
+                    azh = _GB.tel_sampler.az_from_tel()
                     if azh < 0.0:
                         _GB.telstat = _NO_AZIMUTH
                     else:
@@ -675,7 +682,14 @@ def _alp_set_park(handle, data):
 
 def _alp_set_slaved(handle, data):
     'set slave command'
-    ret = set_slave()
+    slaved = data.get(_ALP_SLAVED)
+    if slaved is None:
+        err = (_ALP_VALUE_NOT_SET[0], _ALP_VALUE_NOT_SET[1]+_ALP_SLAVED)
+        _alp_reply_200(handle, data, err=err)
+    if slaved[0]:
+        ret = set_slave()
+    else:
+        ret = stop()
     _alp_reply_action(handle, data, ret)
 
 def _alp_slewtoazimuth(handle, data):
@@ -693,7 +707,7 @@ def _alp_synctoazimuth(handle, data):
     if azh is None:
         err = (_ALP_VALUE_NOT_SET[0], _ALP_VALUE_NOT_SET[1]+_ALP_AZIMUTH)
         _alp_reply_200(handle, data, err=err)
-    ret = sync_to_azimuth(azh)
+    ret = sync_to_azimuth(azh[0])
     _alp_reply_action(handle, data, ret)
 
 #                    command      function                       # Common actions
@@ -1006,8 +1020,7 @@ def add_log(source, msg):
 '''
     _GB.logger.info(f'Dome - [{source}] {msg}')
 
-def start_server(ipport=0, logger=False,                      #pylint: disable=R0915, R0912
-                 sim_k8055=False, sim_tel=False):
+def start_server(ipport=0, logger=None, tel_sampler=None, sim_k8055=False):   #pylint: disable=R0915
     '''
     Launch dome control loop
 
@@ -1016,28 +1029,26 @@ def start_server(ipport=0, logger=False,                      #pylint: disable=R
     ipport : int
         If > 0 start alpaca server with given value as port number (default: 0)
 
-    logger : bool / object
-        if logger is bool: if False no logger is activated, if True use local logger.
-        if logger is an object it must provide two methods: logger.info(msg:str),
-        logger.error(msg:str) used to record logging messages. (default: False)
+    logger : object
+        The logger object it must provide two methods: logger.info(msg:str),
+        logger.error(msg:str) used to record logging messages. (default: None)
+
+    tel_sampler : TelSampler
+        Object provided the telescope sampling capabilities (see info on top of this
+        file
 
     sim_k8055 : bool
         use simulation code for k8055 board controller (default: False)
-
-    sim_tel : bool
-        enable simulation mode for tel_sampler (default: False)
 
     Returns
     -------
     err : str
         Error message. No error is an empty string
     '''
-    if isinstance(logger, bool):
-        logger = _Logger() if logger else _NoLogger()
-
-    _GB.logger = logger
+    _GB.logger =  logger if logger else _NoLogger()
     _GB.logger.info(f'Dome API - start_server(Vers.{__version__}, {__date__})')
     if _GB.server is not None:
+        _GB.logger.info('Dome server already running')
         return _ALREADY_RUNNING
     if sim_k8055:
         _GB.logger.info('Dome - using K8055 simulator')
@@ -1045,8 +1056,9 @@ def start_server(ipport=0, logger=False,                      #pylint: disable=R
     _GB.handle.OpenDevice(K8055_PORT)
     _GB.data_file = os.path.join(THIS_DIR, DOME_DATA_FILE)
     _GB.logger.info(f'Dome - getting data from: {_GB.data_file}')
-    if _TEL_SAMPLER:
-        _GB.logger.info(f'Dome - tel_sampler is: {ts.__file__}')
+    _GB.tel_sampler = tel_sampler
+    if tel_sampler:
+        _GB.logger.info('Dome - tel. sampler is active')
     else:
         _GB.logger.info('Dome - tel_sampler not available')
     try:
@@ -1072,17 +1084,13 @@ def start_server(ipport=0, logger=False,                      #pylint: disable=R
     _GB.vmax = dome_data['vmax']         # fine dati calibrazione
 
     _GB.targetaz = -1
-    _GB.canslave = _TEL_SAMPLER
+    _GB.canslave = bool(tel_sampler)
     if not _GB.canslave:
         _GB.telstat = _CANT_SLAVE
     _GB.saveaz = _GB.domeaz
     _GB.n180 = _GB.n360/2
     _GB.todeg = 360./_GB.n360
     _GB.toenc = _GB.n360/360.
-
-    if _TEL_SAMPLER:
-        _GB.logger.info('Dome - starting tel_sampler')
-        ts.tel_start(logger=logger, simul=sim_tel)
 
     with _GB.cmd_lock:                  # block other API calls
         _GB.server = Thread(target=_dome_loop)
@@ -1149,9 +1157,6 @@ def stop_server():
             _GB.server.join()        # wait server loop termination
             _GB.logger.info(f'Dome - thread {threadid} terminated')
         _GB.server = None
-    if _TEL_SAMPLER:
-        _GB.logger.info('Dome - stopping tel_sampler')
-        ts.tel_stop()
     _GB.logger.info('Dome - clearing all digital outputs')
     _GB.handle.ClearAllDigital()
     if isinstance(_GB.handle, K8055Simulator):   # stop K8055 simulator, if necessary
@@ -1497,7 +1502,7 @@ def start_right():
         with _GB.dome_lock:
             return _start_lk(RIGHT_MOVE, -1.0)
 
-def step_left(tstep):
+def step_left(tstep=1):
     '''
     Do a short dome movement counterclockwise
 
@@ -1518,7 +1523,7 @@ def step_left(tstep):
         with _GB.dome_lock:
             return _start_lk(LEFT_MOVE, tstep)
 
-def step_right(tstep):
+def step_right(tstep=1):
     '''
     Do a short dome movement clockwise
 
@@ -1814,7 +1819,7 @@ def _test():                     #pylint: disable=R0912,R0915
         print(__doc__)
         sys.exit()
     ksimul = '-k' in sys.argv
-    _GB.dc_debug = '-d' in sys.argv
+    debug = '-d' in sys.argv
     telsim = '-s' in sys.argv
     alport = _ALP_TEST_PORT if '-a' in sys.argv else 0
     print()
@@ -1822,19 +1827,25 @@ def _test():                     #pylint: disable=R0912,R0915
     print()
     print('Test program')
     print()
-    if _TEL_SAMPLER:
+    if TEL_SAMPLER:
         print('** slave mode available **')
     else:
         print('** slave mode unavailable **')
     print()
+    logger = _Logger(debug)
+    if TEL_SAMPLER:
+        tls = ts.tel_start(logger, telsim)
+    else:
+        tls = None
     try:
-        ret = start_server(ipport=alport, logger=True,
-                           sim_k8055=ksimul, sim_tel=telsim)
+        ret = start_server(ipport=alport, logger=logger, tel_sampler=tls, sim_k8055=ksimul)
     except IOError:
         print(_NODEVICE)
+        tls.tel_stop()
         sys.exit()
     if ret:
         print('Start error:', ret)
+        tls.tel_stop()
         sys.exit()
     while True:
         ans = _move_cmds(_MORE_HELP, one_shot=True)
@@ -1911,6 +1922,7 @@ def _test():                     #pylint: disable=R0912,R0915
             continue
         if ans[0] == 'q':
             stop()
+            tls.tel_stop()
             stop_server()
             break
 
