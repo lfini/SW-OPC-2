@@ -104,7 +104,7 @@ elif sys.platform == 'win32':
 else:
     raise RuntimeError(f'Unsupported platform: {sys.platform}')
 
-__version__ = '1.3'
+__version__ = '1.4'
 __author__ = 'Luca Fini'
 __date__ = 'March 2023'
 
@@ -226,6 +226,7 @@ class _GB:                  # pylint: disable=R0903
     al_server = None     # HTTPserver for Alpaca
     al_transid = 1       # Alpaca server transaction id
     dc_debug = False     # Debug mode for dome controller
+    dctrl = None
     logger = None        # Main logger
     handle = HANDLE
     data_file = ''       # name of dome data file
@@ -560,12 +561,12 @@ def _log_status():
 
 def _alp_atpark(handle, params):
     'get IsAtPark property'
-    ext_stat = get_ext_status()
+    ext_stat = _GB.dctrl.get_ext_status()
     _alp_reply_200(handle, params, ext_stat['atpark'])
 
 def _alp_getazimuth(handle, params):
     'get Azimuth property'
-    dome_stat = get_status()
+    dome_stat = _GB.dctrl.get_status()
     _alp_reply_200(handle, params, dome_stat.domeaz)
 
 def _alp_unsupported_get(handle, params, command):
@@ -584,22 +585,22 @@ def _alp_retvalue(handle, params, value):
 
 def _alp_getconnected(handle, params):
     'return connection status'
-    dome_stat = get_status()
+    dome_stat = _GB.dctrl.get_status()
     _alp_reply_200(handle, params, value=dome_stat.connected)
 
 def _alp_driverinfo(handle, params):
     'Return info on driver'
-    info = get_info()
+    info = _GB.dctrl.get_info()
     _alp_reply_200(handle, params, value=info)
 
 def _alp_driverversion(handle, params):
     'Return info on driver'
-    info = get_version()
+    info = _GB.dctrl.get_version()
     _alp_reply_200(handle, params, value=info)
 
 def _alp_shutterstatus(handle, params):
     'return shutter status'
-    stat = get_shutter()
+    stat = _GB.dctrl.get_shutter()
     _alp_reply_200(handle, params, value=stat)
 
 def _alp_slavestatus(handle, params):
@@ -609,7 +610,7 @@ def _alp_slavestatus(handle, params):
 
 def _alp_slewstatus(handle, params):
     'return slewing status'
-    dome_stat = get_status()
+    dome_stat = _GB.dctrl.get_status()
     _alp_reply_200(handle, params, value=dome_stat.direct != 0)
 
 def _alp_get_dome_actions(handle, params):
@@ -650,12 +651,12 @@ def _alp_tbi(handle, data, command):
 
 def _alp_abortslew(handle, data):
     'Stop dome movement'
-    ret = stop()
+    ret = _GB.dctrl.stop()
     _alp_reply_action(handle, data, ret)
 
 def _alp_closeshutter(handle, data):
     'close shutter command'
-    ret = close_shutter()
+    ret = _GB.dctrl.close_shutter()
     _alp_reply_action(handle, data, ret)
 
 def _alp_setconnected(handle, data):
@@ -668,17 +669,17 @@ def _alp_find_home(handle, data):
 
 def _alp_open_shutter(handle, data):
     'open shutter command'
-    ret = open_shutter()
+    ret = _GB.dctrl.open_shutter()
     _alp_reply_action(handle, data, ret)
 
 def _alp_goto_park(handle, data):
     'park command'
-    ret = park()
+    ret = _GB.dctrl.park()
     _alp_reply_action(handle, data, ret)
 
 def _alp_set_park(handle, data):
     'set park command'
-    ret = set_park()
+    ret = _GB.dctrl.set_park()
     _alp_reply_action(handle, data, ret)
 
 def _alp_set_slaved(handle, data):
@@ -688,9 +689,9 @@ def _alp_set_slaved(handle, data):
         err = (_ALP_VALUE_NOT_SET[0], _ALP_VALUE_NOT_SET[1]+_ALP_SLAVED)
         _alp_reply_200(handle, data, err=err)
     if slaved[0] == 'True':
-        ret = set_slave()
+        ret = _GB.dctrl.set_slave()
     else:
-        ret = stop()
+        ret = _GB.dctrl.stop()
     _alp_reply_action(handle, data, ret)
 
 def _alp_slewtoazimuth(handle, data):
@@ -699,7 +700,7 @@ def _alp_slewtoazimuth(handle, data):
     if azh is None:
         err = (_ALP_VALUE_NOT_SET[0], _ALP_VALUE_NOT_SET[1]+_ALP_AZIMUTH)
         _alp_reply_200(handle, data, err=err)
-    ret = slew_to_azimuth(azh[0])
+    ret = _GB.dctrl.slew_to_azimuth(azh[0])
     _alp_reply_action(handle, data, ret)
 
 def _alp_synctoazimuth(handle, data):
@@ -708,7 +709,7 @@ def _alp_synctoazimuth(handle, data):
     if azh is None:
         err = (_ALP_VALUE_NOT_SET[0], _ALP_VALUE_NOT_SET[1]+_ALP_AZIMUTH)
         _alp_reply_200(handle, data, err=err)
-    ret = sync_to_azimuth(azh[0])
+    ret = _GB.dctrl.sync_to_azimuth(azh[0])
     _alp_reply_action(handle, data, ret)
 
 #                    command      function                       # Common actions
@@ -757,7 +758,7 @@ def _alp_retswitchpar(handle, params, vlist):
 
 def _alp_getswitch(handle, params):
     'Return status of given switch (True/False)'
-    sw_stat = get_switch_states()
+    sw_stat = _GB.dctrl.get_switch_states()
     _alp_retswitchpar(handle, params, sw_stat)
 
 def _alp_switchcanwrite(handle, params):
@@ -766,17 +767,17 @@ def _alp_switchcanwrite(handle, params):
 
 def _alp_getswitchdescr(handle, params):
     'return description of switch'
-    sw_stat = get_switch_descr()
+    sw_stat = _GB.dctrl.get_switch_descr()
     _alp_retswitchpar(handle, params, sw_stat)
 
 def _alp_getswitchname(handle, params):
     'return name of switch'
-    sw_stat = get_switch_names()
+    sw_stat = _GB.dctrl.get_switch_names()
     _alp_retswitchpar(handle, params, sw_stat)
 
 def _alp_getswitchvalue(handle, params):
     'Return status of given switch (1/0)'
-    sw_stat = get_switch_states()
+    sw_stat = _GB.dctrl.get_switch_states()
     _alp_retswitchpar(handle, params, sw_stat)
 
 def _alp_get_switch_actions(handle, params):
@@ -817,7 +818,7 @@ def _alp_setswitch(handle, data):
         _alp_reply_200(handle, data, err=err)
         return
     enable = enable[0].startswith('T')
-    ret = switch(nrele, enable)
+    ret = _GB.dctrl.switch(nrele, enable)
     _alp_reply_action(handle, data, ret)
 
 def _alp_setswitchval(handle, data):
@@ -842,7 +843,7 @@ def _alp_setswitchval(handle, data):
         err = (_ALP_INVALID_VALUE[0], _ALP_INVALID_VALUE[1]+str(enable))
         _alp_reply_200(handle, data, err=err)
         return
-    ret = switch(nrele, enable)
+    ret = _GB.dctrl.switch(nrele, enable)
     _alp_reply_action(handle, data, ret)
 
 #   COMMON ACTIONS     command         function
@@ -1015,22 +1016,9 @@ def _run_alpaca(port):
 ##################################  API section  ############################
 
 ####################################################  Server management calls
-def add_log(source, msg):
-    '''
-    Add a message to log file
-
-    Parameters
-    ----------
-    source: str
-        Identification of source of message
-    mst: str
-        Text of log message
-'''
-    _GB.logger.info(f'Dome - [{source}] {msg}')
-
 def start_server(ipport=0, logger=None, tel_sampler=None, sim_k8055=False):   #pylint: disable=R0915
     '''
-    Launch dome control loop
+    Launch dome control loop.
 
     Parameters
     ----------
@@ -1050,14 +1038,13 @@ def start_server(ipport=0, logger=None, tel_sampler=None, sim_k8055=False):   #p
 
     Returns
     -------
-    err : str
-        Error message. No error is an empty string
+    dct : DomeController object
     '''
     _GB.logger =  logger if logger else _NoLogger()
     _GB.logger.info(f'Dome API - start_server(Vers.{__version__}, {__date__})')
     if _GB.server is not None:
         _GB.logger.info('Dome server already running')
-        return _ALREADY_RUNNING
+        raise RuntimeError(_ALREADY_RUNNING)
     if sim_k8055:
         _GB.logger.info('Dome - using K8055 simulator')
         _GB.handle = K8055Simulator()
@@ -1072,8 +1059,8 @@ def start_server(ipport=0, logger=None, tel_sampler=None, sim_k8055=False):   #p
     try:
         with open(_GB.data_file, encoding='utf8') as f_in:
             dome_data = json.load(f_in)
-    except FileNotFoundError:
-        return _NO_DOME_DATA
+    except FileNotFoundError as exc:
+        raise RuntimeError(_NO_DOME_DATA) from exc
     _GB.domeaz = dome_data['domeaz']     # Dati calibrazione
     _GB.hoffset = dome_data['hoffset']   #
     _GB.maxerr = dome_data['maxerr']     #
@@ -1108,7 +1095,7 @@ def start_server(ipport=0, logger=None, tel_sampler=None, sim_k8055=False):   #p
             time.sleep(0.1)
             count -= 1
         if not _GB.server.is_alive():
-            return _DOME_THREAD_ERROR
+            raise RuntimeError(_DOME_THREAD_ERROR)
         _log_status()
 
     _GB.logger.info(f'Dome - thread {_GB.server.native_id} running')
@@ -1120,522 +1107,549 @@ def start_server(ipport=0, logger=None, tel_sampler=None, sim_k8055=False):   #p
         while not _GB.alpaca.is_alive():
             time.sleep(0.1)
         if not _GB.alpaca.is_alive():
-            return _ALPACA_THREAD_ERROR
+            raise RuntimeError(_ALPACA_THREAD_ERROR)
         _GB.logger.info(f'Alpaca - thread {_GB.alpaca.native_id} running')
-    return _NO_ERROR
+    _GB.dctrl = DomeController()
+    return _GB.dctrl
 
-def stop_server():
-    '''
-    Stop dome control loop. To be called before application exit
-    (Note: after being stoppep the server cannot be started again)
+class DomeController:              #pylint: disable=R0904
+    'DomeController (singleton)'
+    @staticmethod
+    def stop_server():
+        '''
+        Stop dome control loop. To be called before application exit
+        (Note: after being stoppep the server cannot be started again)
 
-    Returns
-    -------
-    err : str
-        Error message. No error is an empty string
-    '''
-    _GB.logger.info('Dome API - stop_server()')
+        Returns
+        -------
+        err : str
+            Error message. No error is an empty string
+        '''
+        _GB.logger.info('Dome API - stop_server()')
 
-    with _GB.cmd_lock:                # Block all API calls
-        with _GB.dome_lock:               # stop dome movement, if necessary
-            _GB.isslave = False
-            _GB.targetaz = -1.0
-            if _GB.movstat in (AIMING, STEPPING, RUNNING):
-                _stop_lk('stop_server')
-        while True:                   # wait for dome complete stop
-            if _GB.movstat == IDLE:
-                break
-            time.sleep(_GB.tpoll)
-        if _GB.alpaca:
-            _GB.logger.info('Alpaca - shutting down http server')
-            threadid = _GB.alpaca.native_id
-            _GB.al_server.shutdown()
-            _GB.logger.info('Alpaca - waiting thread to exit')
-            _GB.alpaca.join()
-            _GB.logger.info(f'Alpaca - thread {threadid} terminated')
-        while True:                 # wait for timers to be executed
-            with _AFTER.lock:
-                if not _AFTER.queue:
+        with _GB.cmd_lock:                # Block all API calls
+            with _GB.dome_lock:               # stop dome movement, if necessary
+                _GB.isslave = False
+                _GB.targetaz = -1.0
+                if _GB.movstat in (AIMING, STEPPING, RUNNING):
+                    _stop_lk('stop_server')
+            while True:                   # wait for dome complete stop
+                if _GB.movstat == IDLE:
                     break
-            time.sleep(0.1)
-        if _GB.server:
-            threadid = _GB.server.native_id
-            _GB.loop = False
-            _GB.logger.info('Dome - waiting thread to exit')
-            _GB.server.join()        # wait server loop termination
-            _GB.logger.info(f'Dome - thread {threadid} terminated')
-        _GB.server = None
-    _GB.logger.info('Dome - clearing all digital outputs')
-    _GB.handle.ClearAllDigital()
-    if isinstance(_GB.handle, K8055Simulator):   # stop K8055 simulator, if necessary
-        _GB.logger.info('Dome - stop K8055 simulator loop')
-        _GB.handle.stop()
-    try:
-        with open(_GB.data_file, encoding='utf8') as f_in:
-            dome_data = json.load(f_in)
-    except FileNotFoundError:
-        return _CANT_SAVE_STATUS
-    dome_data['parkaz'] = _GB.parkaz
-    dome_data['domeaz'] = _GB.domeaz
-    with open(_GB.data_file, 'w', encoding='utf8') as f_out:
-        json.dump(dome_data, f_out)
-    _GB.logger.info('Dome - saved dome_data file: '+_GB.data_file)
-    _GB.logger.info('Dome - end of stop_server() procedure')
-    return _NO_ERROR
+                time.sleep(_GB.tpoll)
+            if _GB.alpaca:
+                _GB.logger.info('Alpaca - shutting down http server')
+                threadid = _GB.alpaca.native_id
+                _GB.al_server.shutdown()
+                _GB.logger.info('Alpaca - waiting thread to exit')
+                _GB.alpaca.join()
+                _GB.logger.info(f'Alpaca - thread {threadid} terminated')
+            while True:                 # wait for timers to be executed
+                with _AFTER.lock:
+                    if not _AFTER.queue:
+                        break
+                time.sleep(0.1)
+            if _GB.server:
+                threadid = _GB.server.native_id
+                _GB.loop = False
+                _GB.logger.info('Dome - waiting thread to exit')
+                _GB.server.join()        # wait server loop termination
+                _GB.logger.info(f'Dome - thread {threadid} terminated')
+            _GB.server = None
+        _GB.logger.info('Dome - clearing all digital outputs')
+        _GB.handle.ClearAllDigital()
+        if isinstance(_GB.handle, K8055Simulator):   # stop K8055 simulator, if necessary
+            _GB.logger.info('Dome - stop K8055 simulator loop')
+            _GB.handle.stop()
+        try:
+            with open(_GB.data_file, encoding='utf8') as f_in:
+                dome_data = json.load(f_in)
+        except FileNotFoundError:
+            return _CANT_SAVE_STATUS
+        dome_data['parkaz'] = _GB.parkaz
+        dome_data['domeaz'] = _GB.domeaz
+        with open(_GB.data_file, 'w', encoding='utf8') as f_out:
+            json.dump(dome_data, f_out)
+        _GB.logger.info('Dome - saved dome_data file: '+_GB.data_file)
+        _GB.logger.info('Dome - end of stop_server() procedure')
+        return _NO_ERROR
 
 ############################################################  Dome control calls
-def close_shutter():
+    @staticmethod
+    def close_shutter():
+        '''
+        Close shutter
+
+        Returns
+        -------
+        err : str
+            Error message. No error is an empty string
+        '''
+        _GB.logger.info('Dome API - close_shutter()')
+        with _GB.cmd_lock:
+            ret = _start_pulse(CLOSE_SHUTTER, _PULSE_TIME)
+            _after(_GB.shuttime, lambda: _set_shut_stat(0))
+        return ret
+
+    @staticmethod
+    def find_home():
+        '''
+        Go to home position (if supported by hardware)
+
+        Returns
+        -------
+        err : str
+            Error message. No error is an empty string
+        '''
+        with _GB.cmd_lock:
+            return 'find_home:' +_UNIMPLEMENTED
+
+    @staticmethod
+    def get_ext_status():
+        '''
+        Read extended dome status
+
+        Returns
+        -------
+        status : dict
+            athome         Dome is at home
+            atpark         Dome is at park
+            connected      Connection status, True if dome is connected
+            direct         Moving direction:  0=Idle, 4=clockwise, 3=counterclockwise
+            domeaz         Current azimuth in encoder units
+            isslave        Dome is currently slaved to telescope
+            homeaz         Home position in encoder units
+            movstat        Moving satus: 0:Idle, 1:Stopping, 2: aiming at target,
+                                         3: doing a step, 4: running free
+            parkaz         Parking position in encoder units
+            targetaz       Current target azimuth in encoder units
+            telstat        Telescope status: 0: cannot slave, 1: azimuth not avaliable
+                                             2: telescope ok
+         '''
+        ret = {}
+        with _GB.cmd_lock:
+            with _GB.dome_lock:
+                direct = _GB.direct
+                movstat = _GB.movstat
+                domeaz = _GB.domeaz
+                targetaz = _GB.targetaz
+            ret['athome'] = None    # TBD
+            ret['atpark'] = movstat == IDLE and abs(_ang_dist(domeaz, _GB.parkaz)) <= _GB.maxerr
+            ret['connected'] = bool(_GB.handle)
+            ret['direct'] = direct
+            ret['domeaz'] = domeaz
+            ret['isslave'] = _GB.isslave
+            ret['homeaz'] = _GB.hoffset
+            ret['movstat'] = movstat
+            ret['parkaz'] = _GB.parkaz
+            ret['targetaz'] = targetaz
+            ret['telstat'] = _GB.telstat
+        return ret
+
+    @staticmethod
+    def get_info():
+        '''
+        Get extended info about the controller
+
+        Returns
+        -------
+        info : str
+        '''
+        return f'OPC dome controller. Vers. {__version__}. {__author__}, {__date__}'
+
+    @staticmethod
+    def get_params():
+        '''
+        Get dome static parameters
+
+        Returns
+        -------
+        params: dict
+            canslave       Dome can be slaved to telescope
+            maxerr         Max position error in encoder units
+            n360           Number of encoder steps for 360°
+            nstart         Encoder counts for acceleration to max speed
+            nstop          Encoder steps for deceleration from max speed
+            t360           Time to do a full 360° turn
+            tpoll          Polling period (sec)
+            tsafe          Time for safe assess of stopping (sec)
+            tstart         Time for accelartion to full speed (sec)
+            tstop          Time for deceleration from full speed (sec)
+            vmax           Max speed in encoder counts/sec
     '''
-    Close shutter
+        ret = {}
+        with _GB.cmd_lock:
+            ret['canslave'] = _GB.canslave
+            ret['maxerr'] = _GB.maxerr
+            ret['n360'] = _GB.n360
+            ret['nstart'] = _GB.nstart
+            ret['nstop'] = _GB.nstop
+            ret['t360'] = _GB.t360
+            ret['tpoll'] = _GB.tpoll
+            ret['tsafe'] = _GB.tsafe
+            ret['tstart'] = _GB.tstart
+            ret['tstop'] = _GB.tstop
+            ret['vmax'] = _GB.vmax
+        return ret
 
-    Returns
-    -------
-    err : str
-        Error message. No error is an empty string
-    '''
-    _GB.logger.info('Dome API - close_shutter()')
-    with _GB.cmd_lock:
-        ret = _start_pulse(CLOSE_SHUTTER, _PULSE_TIME)
-        _after(_GB.shuttime, lambda: _set_shut_stat(0))
-    return ret
+    @staticmethod
+    def get_shutter():
+        '''
+        Get shutter status
 
-def find_home():
-    '''
-    Go to home position (if supported by hardware)
+        Returns
+        -------
+        status : int
+            0: closed,  1: open
+        '''
+        return _GB.shutstat
 
-    Returns
-    -------
-    err : str
-        Error message. No error is an empty string
-    '''
-    with _GB.cmd_lock:
-        return 'find_home:' +_UNIMPLEMENTED
+    @staticmethod
+    def get_status():
+        '''Read essential dome status
 
-def get_ext_status():
-    '''
-    Read extended dome status
-
-    Returns
-    -------
-    status : dict
-        athome         Dome is at home
-        atpark         Dome is at park
-        connected      Connection status, True if dome is connected
-        direct         Moving direction:  0=Idle, 4=clockwise, 3=counterclockwise
-        domeaz         Current azimuth in encoder units
-        isslave        Dome is currently slaved to telescope
-        homeaz         Home position in encoder units
-        movstat        Moving satus: 0:Idle, 1:Stopping, 2: aiming at target,
-                                     3: doing a step, 4: running free
-        parkaz         Parking position in encoder units
-        targetaz       Current target azimuth in encoder units
-        telstat        Telescope status: 0: cannot slave, 1: azimuth not avaliable
-                                         2: telescope ok
-     '''
-    ret = {}
-    with _GB.cmd_lock:
-        with _GB.dome_lock:
-            direct = _GB.direct
-            movstat = _GB.movstat
-            domeaz = _GB.domeaz
-            targetaz = _GB.targetaz
-        ret['athome'] = None    # TBD
-        ret['atpark'] = movstat == IDLE and abs(_ang_dist(domeaz, _GB.parkaz)) <= _GB.maxerr
-        ret['connected'] = bool(_GB.handle)
-        ret['direct'] = direct
-        ret['domeaz'] = domeaz
-        ret['isslave'] = _GB.isslave
-        ret['homeaz'] = _GB.hoffset
-        ret['movstat'] = movstat
-        ret['parkaz'] = _GB.parkaz
-        ret['targetaz'] = targetaz
-        ret['telstat'] = _GB.telstat
-    return ret
-
-def get_info():
-    '''
-    Get extended info about the controller
-
-    Returns
-    -------
-    info : str
-    '''
-    return f'OPC dome controller. Vers. {__version__}. {__author__}, {__date__}'
-
-def get_params():
-    '''
-    Get dome static parameters
-
-    Returns
-    -------
-    params: dict
-        canslave       Dome can be slaved to telescope
-        maxerr         Max position error in encoder units
-        n360           Number of encoder steps for 360°
-        nstart         Encoder counts for acceleration to max speed
-        nstop          Encoder steps for deceleration from max speed
-        t360           Time to do a full 360° turn
-        tpoll          Polling period (sec)
-        tsafe          Time for safe assess of stopping (sec)
-        tstart         Time for accelartion to full speed (sec)
-        tstop          Time for deceleration from full speed (sec)
-        vmax           Max speed in encoder counts/sec
-'''
-    ret = {}
-    with _GB.cmd_lock:
-        ret['canslave'] = _GB.canslave
-        ret['maxerr'] = _GB.maxerr
-        ret['n360'] = _GB.n360
-        ret['nstart'] = _GB.nstart
-        ret['nstop'] = _GB.nstop
-        ret['t360'] = _GB.t360
-        ret['tpoll'] = _GB.tpoll
-        ret['tsafe'] = _GB.tsafe
-        ret['tstart'] = _GB.tstart
-        ret['tstop'] = _GB.tstop
-        ret['vmax'] = _GB.vmax
-    return ret
-
-def get_shutter():
-    '''
-    Get shutter status
-
-    Returns
-    -------
-    status : int
-        0: closed,  1: open
-    '''
-    return _GB.shutstat
-
-def get_status():
-    '''Read essential dome status
-
-    Returns
-    -------
-    status : STAT class
-        connected - True if dome is connected
-        domeaz    - Current azimuth (degrees)
-        direct    - Moving status: 0=idle, 1=clockwise, -1=counterclockwise
-        idletime  - Idle fraction of contol loop period
-        isslave   - If dome is slaved to telescope
-        movstat   - Motion status: 0=idle, 1=stopping, 2=aiming, 3=stepping
-        targetaz  - Current target azimuth (degrees). If < 0, then target
-                    azimuth is not set
-    '''
+        Returns
+        -------
+        status : STAT class
+            connected - True if dome is connected
+            domeaz    - Current azimuth (degrees)
+            direct    - Moving status: 0=idle, 1=clockwise, -1=counterclockwise
+            idletime  - Idle fraction of contol loop period
+            isslave   - If dome is slaved to telescope
+            movstat   - Motion status: 0=idle, 1=stopping, 2=aiming, 3=stepping
+            targetaz  - Current target azimuth (degrees). If < 0, then target
+                        azimuth is not set
+        '''
 #   _dc_log('API: get_status()')
-    with _GB.cmd_lock:
-        with _GB.dome_lock:
-            domeaz = _GB.domeaz
-            direct = _GB.direct
-            idtime = _GB.idletime
-            movstat = _GB.movstat
-            targetaz = _GB.targetaz
-        _STAT.idletime = idtime
-        _STAT.movstat = movstat
-        _STAT.connected = _GB.server is not None
-        _STAT.domeaz = domeaz*_GB.todeg
-        _STAT.targetaz = targetaz*_GB.todeg
-        _STAT.isslave = _GB.isslave
-        if direct == RIGHT_MOVE:
-            _STAT.direct = 1
-        elif direct == LEFT_MOVE:
-            _STAT.direct = -1
-        else:
-            _STAT.direct = 0
-    return _STAT
-
-def get_switch_names():
-    '''
-    Get names of switches.
-
-    Returns
-    -------
-    names : [str]
-    '''
-    return _SWITCH.names
-
-def get_switch_descr():
-    '''
-    Get extended descriptions of switches.
-
-    Returns
-    -------
-    descr : [str]
-    '''
-    return _SWITCH.descr
-
-def get_switch_states():
-    '''
-    Get states of all switches
-
-    Returns
-    -------
-    states : [int]   0: open,  1: closed
-    '''
-    with _GB.cmd_lock:
-        return _GB.switch_stat.copy()
-
-def get_version():
-    '''
-    Get controller version
-
-    Returns
-    -------
-    version : str
-    '''
-    return __version__
-
-def open_shutter():
-    '''
-    Open shutter
-
-    Returns
-    -------
-    err : str
-        Error message. No error is an empty string
-    '''
-    with _GB.cmd_lock:
-        _GB.logger.info('Dome API - open_shutter()')
-        ret = _start_pulse(OPEN_SHUTTER, _PULSE_TIME)
-        _after(_GB.shuttime, lambda: _set_shut_stat(1))
-    return ret
-
-def park():
-    '''
-    Slew to park position
-
-    Returns
-    -------
-    err : str
-        Error message. No error is an empty string
-    '''
-    _GB.logger.info('Dome API - park')
-    with _GB.cmd_lock:
-        if not _GB.handle:
-            return _UNCONNECTED
-        if _GB.parkaz is None:
-            return _UNCONFIGURED
-    return _slew_to(_GB.parkaz)
-
-def set_park():
-    '''
-    Set current position as park
-
-    Returns
-    -------
-    err : str
-        Error message. No error is an empty string
-    '''
-    _GB.logger.info('Dome API - set_park()')
-    with _GB.cmd_lock:
-        with _GB.dome_lock:
-            if _GB.movstat != IDLE or _GB.isslave:
-                _GB.logger.error(_CANT_EXECUTE)
-                return _CANT_EXECUTE
-            _GB.parkaz = _GB.domeaz
-    return _NO_ERROR
-
-def set_slave():             # pylint: disable=R0911
-    '''
-    Enable slave mode (slave mode can disabled by stop())
-
-    Returns
-    -------
-    err : str
-        Error message. No error is an empty string
-    '''
-    _GB.logger.info('Dome API - set_slave()')
-    with _GB.cmd_lock:
-        if not _GB.handle:
-            return _UNCONNECTED
-        if not _GB.canslave:
-            _GB.logger.error(_CANT_EXECUTE)
-            return _CANT_EXECUTE
-        if _GB.isslave:
-            return _NO_ERROR
-        with _GB.dome_lock:
-            if _GB.movstat != IDLE:
-                _GB.logger.error(_CANT_EXECUTE)
-                return _CANT_EXECUTE
-            _GB.isslave = True
-        return _NO_ERROR
-    return _NO_ERROR
-
-def slew_to_azimuth(azh):
-    '''
-    Slew to given azimuth
-
-    Parameters
-    ----------
-    azh : float
-        azimuth position (degrees)
-
-    Returns
-    -------
-    err : str
-        Error message. No error is an empty string
-    '''
-    _GB.logger.info(f'Dome API - slew_to_azimuth({azh})')
-    with _GB.cmd_lock:
-        try:
-            return _slew_to(_to_encoder(float(azh)))
-        except ValueError:
-            return _VALUE_ERROR
-
-def start_left():
-    '''
-    Start dome movement counterclockwise
-
-    Returns
-    -------
-    err : str
-        Error message. No error is an empty string
-    '''
-    _GB.logger.info('Dome API - start_left()')
-    with _GB.cmd_lock:
-        with _GB.dome_lock:
-            return _start_lk(LEFT_MOVE, -1.0)
-
-def start_right():
-    '''
-    Start dome movement clockwise
-
-    Returns
-    -------
-    err : str
-        Error message. No error is an empty string
-    '''
-    _GB.logger.info('Dome API - start_right()')
-    with _GB.cmd_lock:
-        with _GB.dome_lock:
-            return _start_lk(RIGHT_MOVE, -1.0)
-
-def step_left(tstep=1):
-    '''
-    Do a short dome movement counterclockwise
-
-    Parameters
-    ----------
-    tstep : float
-        Duration of step pulse
-
-    Returns
-    -------
-    err : str
-        Error message. No error is an empty string
-    '''
-    _GB.logger.info(f'Dome API - step_left({tstep})')
-    if tstep <= 0:
-        return _VALUE_ERROR
-    with _GB.cmd_lock:
-        with _GB.dome_lock:
-            return _start_lk(LEFT_MOVE, tstep)
-
-def step_right(tstep=1):
-    '''
-    Do a short dome movement clockwise
-
-    Parameters
-    ----------
-    tstep : float
-        Duration of step pulse
-
-    Returns
-    -------
-    err : str
-        Error message. No error is an empty string
-    '''
-    _GB.logger.info(f'Dome API - step_right({tstep})')
-    if tstep <= 0:
-        return _VALUE_ERROR
-    with _GB.cmd_lock:
-        with _GB.dome_lock:
-            return _start_lk(RIGHT_MOVE, tstep)
-
-def stop():
-    '''
-    Stop movement (if in slave mode also set not slave)
-
-    Returns
-    -------
-    err : str
-        Error message. No error is an empty string
-    '''
-    _GB.logger.info('Dome API - stop()')
-    with _GB.cmd_lock:
-        if not _GB.handle:
-            return _UNCONNECTED
-        with _GB.dome_lock:
-            _GB.isslave = False
-            if _GB.movstat == IDLE:
-                return _NO_ERROR
-            if _GB.movstat in (AIMING, STEPPING, RUNNING):
-                _stop_lk('Stop command')
-            _GB.targetaz = -1
-    return _NO_ERROR
-
-def switch(n_rele, enable=True):
-    '''
-    Set/clear specified switch
-
-    Parameters
-    ----------
-    n_switch : int
-        Number of switch to operate [0..3]
-    enable : bool
-        True: close switch, False: open switch
-
-    Returns
-    -------
-    err : str
-        Error message. No error is an empty string
-    '''
-    _GB.logger.info(f'Dome API - switch({n_rele}, {enable})')
-    with _GB.cmd_lock:
-        if not _GB.handle:
-            return _UNCONNECTED
-        try:
-            n_rele = int(n_rele)
-        except ValueError:
-            return _VALUE_ERROR
-        if 0 <= n_rele <= 3:
-            if enable:
-                _GB.handle.SetDigitalChannel(AUX_RELE_1+n_rele)
-                _GB.switch_stat[n_rele] = 1
+        with _GB.cmd_lock:
+            with _GB.dome_lock:
+                domeaz = _GB.domeaz
+                direct = _GB.direct
+                idtime = _GB.idletime
+                movstat = _GB.movstat
+                targetaz = _GB.targetaz
+            _STAT.idletime = idtime
+            _STAT.movstat = movstat
+            _STAT.connected = _GB.server is not None
+            _STAT.domeaz = domeaz*_GB.todeg
+            _STAT.targetaz = targetaz*_GB.todeg
+            _STAT.isslave = _GB.isslave
+            if direct == RIGHT_MOVE:
+                _STAT.direct = 1
+            elif direct == LEFT_MOVE:
+                _STAT.direct = -1
             else:
-                _GB.handle.ClearDigitalChannel(AUX_RELE_1+n_rele)
-                _GB.switch_stat[n_rele] = 0
-            return _NO_ERROR
-    return _VALUE_ERROR
+                _STAT.direct = 0
+        return _STAT
 
-def sync_to_azimuth(azh):
-    '''
-    Set current azimuth
+    @staticmethod
+    def get_switch_names():
+        '''
+        Get names of switches.
 
-    Parameters
-    ----------
-    azh : float
-        azimuth value (degrees)
+        Returns
+        -------
+        names : [str]
+        '''
+        return _SWITCH.names
 
-    Returns
-    -------
-    err : str
-        Error message. No error is an empty string
-    '''
-    _GB.logger.info(f'Dome API - sync_to_azimuth({azh})')
-    try:
-        domeaz = _to_encoder(float(azh))
-    except ValueError:
-        return _VALUE_ERROR
-    with _GB.cmd_lock:
-        if not _GB.handle:
-            return _UNCONNECTED
-        with _GB.dome_lock:
-            if _GB.movstat != IDLE:
+    @staticmethod
+    def get_switch_descr():
+        '''
+        Get extended descriptions of switches.
+
+        Returns
+        -------
+        descr : [str]
+        '''
+        return _SWITCH.descr
+
+    @staticmethod
+    def get_switch_states():
+        '''
+        Get states of all switches
+
+        Returns
+        -------
+        states : [int]   0: open,  1: closed
+        '''
+        with _GB.cmd_lock:
+            return _GB.switch_stat.copy()
+
+    @staticmethod
+    def get_version():
+        '''
+        Get controller version
+
+        Returns
+        -------
+        version : str
+        '''
+        return __version__
+
+    @staticmethod
+    def open_shutter():
+        '''
+        Open shutter
+
+        Returns
+        -------
+        err : str
+            Error message. No error is an empty string
+        '''
+        with _GB.cmd_lock:
+            _GB.logger.info('Dome API - open_shutter()')
+            ret = _start_pulse(OPEN_SHUTTER, _PULSE_TIME)
+            _after(_GB.shuttime, lambda: _set_shut_stat(1))
+        return ret
+
+    @staticmethod
+    def park():
+        '''
+        Slew to park position
+
+        Returns
+        -------
+        err : str
+            Error message. No error is an empty string
+        '''
+        _GB.logger.info('Dome API - park')
+        with _GB.cmd_lock:
+            if not _GB.handle:
+                return _UNCONNECTED
+            if _GB.parkaz is None:
+                return _UNCONFIGURED
+        return _slew_to(_GB.parkaz)
+
+    @staticmethod
+    def set_park():
+        '''
+        Set current position as park
+
+        Returns
+        -------
+        err : str
+            Error message. No error is an empty string
+        '''
+        _GB.logger.info('Dome API - set_park()')
+        with _GB.cmd_lock:
+            with _GB.dome_lock:
+                if _GB.movstat != IDLE or _GB.isslave:
+                    _GB.logger.error(_CANT_EXECUTE)
+                    return _CANT_EXECUTE
+                _GB.parkaz = _GB.domeaz
+        return _NO_ERROR
+
+    @staticmethod
+    def set_slave():             # pylint: disable=R0911
+        '''
+        Enable slave mode (slave mode can disabled by stop())
+
+        Returns
+        -------
+        err : str
+            Error message. No error is an empty string
+        '''
+        _GB.logger.info('Dome API - set_slave()')
+        with _GB.cmd_lock:
+            if not _GB.handle:
+                return _UNCONNECTED
+            if not _GB.canslave:
                 _GB.logger.error(_CANT_EXECUTE)
                 return _CANT_EXECUTE
-            _GB.domeaz = domeaz
-    return _NO_ERROR
+            if _GB.isslave:
+                return _NO_ERROR
+            with _GB.dome_lock:
+                if _GB.movstat != IDLE:
+                    _GB.logger.error(_CANT_EXECUTE)
+                    return _CANT_EXECUTE
+                _GB.isslave = True
+            return _NO_ERROR
+        return _NO_ERROR
+
+    @staticmethod
+    def slew_to_azimuth(azh):
+        '''
+        Slew to given azimuth
+
+        Parameters
+        ----------
+        azh : float
+            azimuth position (degrees)
+
+        Returns
+        -------
+        err : str
+            Error message. No error is an empty string
+        '''
+        _GB.logger.info(f'Dome API - slew_to_azimuth({azh})')
+        with _GB.cmd_lock:
+            try:
+                return _slew_to(_to_encoder(float(azh)))
+            except ValueError:
+                return _VALUE_ERROR
+
+    @staticmethod
+    def start_left():
+        '''
+        Start dome movement counterclockwise
+
+        Returns
+        -------
+        err : str
+            Error message. No error is an empty string
+        '''
+        _GB.logger.info('Dome API - start_left()')
+        with _GB.cmd_lock:
+            with _GB.dome_lock:
+                return _start_lk(LEFT_MOVE, -1.0)
+
+    @staticmethod
+    def start_right():
+        '''
+        Start dome movement clockwise
+
+        Returns
+        -------
+        err : str
+            Error message. No error is an empty string
+        '''
+        _GB.logger.info('Dome API - start_right()')
+        with _GB.cmd_lock:
+            with _GB.dome_lock:
+                return _start_lk(RIGHT_MOVE, -1.0)
+
+    @staticmethod
+    def step_left(tstep=1):
+        '''
+        Do a short dome movement counterclockwise
+
+        Parameters
+        ----------
+        tstep : float
+            Duration of step pulse
+
+        Returns
+        -------
+        err : str
+            Error message. No error is an empty string
+        '''
+        _GB.logger.info(f'Dome API - step_left({tstep})')
+        if tstep <= 0:
+            return _VALUE_ERROR
+        with _GB.cmd_lock:
+            with _GB.dome_lock:
+                return _start_lk(LEFT_MOVE, tstep)
+
+    @staticmethod
+    def step_right(tstep=1):
+        '''
+        Do a short dome movement clockwise
+
+        Parameters
+        ----------
+        tstep : float
+            Duration of step pulse
+
+        Returns
+        -------
+        err : str
+            Error message. No error is an empty string
+        '''
+        _GB.logger.info(f'Dome API - step_right({tstep})')
+        if tstep <= 0:
+            return _VALUE_ERROR
+        with _GB.cmd_lock:
+            with _GB.dome_lock:
+                return _start_lk(RIGHT_MOVE, tstep)
+
+    @staticmethod
+    def stop():
+        '''
+        Stop movement (if in slave mode also set not slave)
+
+        Returns
+        -------
+        err : str
+            Error message. No error is an empty string
+        '''
+        _GB.logger.info('Dome API - stop()')
+        with _GB.cmd_lock:
+            if not _GB.handle:
+                return _UNCONNECTED
+            with _GB.dome_lock:
+                _GB.isslave = False
+                if _GB.movstat == IDLE:
+                    return _NO_ERROR
+                if _GB.movstat in (AIMING, STEPPING, RUNNING):
+                    _stop_lk('Stop command')
+                _GB.targetaz = -1
+        return _NO_ERROR
+
+    @staticmethod
+    def switch(n_rele, enable=True):
+        '''
+        Set/clear specified switch
+
+        Parameters
+        ----------
+        n_switch : int
+            Number of switch to operate [0..3]
+        enable : bool
+            True: close switch, False: open switch
+
+        Returns
+        -------
+        err : str
+            Error message. No error is an empty string
+        '''
+        _GB.logger.info(f'Dome API - switch({n_rele}, {enable})')
+        with _GB.cmd_lock:
+            if not _GB.handle:
+                return _UNCONNECTED
+            try:
+                n_rele = int(n_rele)
+            except ValueError:
+                return _VALUE_ERROR
+            if 0 <= n_rele <= 3:
+                if enable:
+                    _GB.handle.SetDigitalChannel(AUX_RELE_1+n_rele)
+                    _GB.switch_stat[n_rele] = 1
+                else:
+                    _GB.handle.ClearDigitalChannel(AUX_RELE_1+n_rele)
+                    _GB.switch_stat[n_rele] = 0
+                return _NO_ERROR
+        return _VALUE_ERROR
+
+    @staticmethod
+    def sync_to_azimuth(azh):
+        '''
+        Set current azimuth
+
+        Parameters
+        ----------
+        azh : float
+            azimuth value (degrees)
+
+        Returns
+        -------
+        err : str
+            Error message. No error is an empty string
+        '''
+        _GB.logger.info(f'Dome API - sync_to_azimuth({azh})')
+        try:
+            domeaz = _to_encoder(float(azh))
+        except ValueError:
+            return _VALUE_ERROR
+        with _GB.cmd_lock:
+            if not _GB.handle:
+                return _UNCONNECTED
+            with _GB.dome_lock:
+                if _GB.movstat != IDLE:
+                    _GB.logger.error(_CANT_EXECUTE)
+                    return _CANT_EXECUTE
+                _GB.domeaz = domeaz
+        return _NO_ERROR
 
 #################################################### test section #################################
 def _print_err(err):
@@ -1696,7 +1710,7 @@ def _wait_stop():
     goon = True
     while goon:
         time.sleep(1)
-        stat = get_status()
+        stat = _GB.dctrl.get_status()
         if stat.direct == 0:
             break
     return stat
@@ -1705,9 +1719,9 @@ def _test_goto(deg):
     'Goto given position'
     _GB.logger.info(f'Test goto: {deg}')
     print(f'Slewing to {deg:.2f}°...', end=' ', flush=True)
-    slew_to_azimuth(deg)
+    _GB.dctrl.slew_to_azimuth(deg)
     stat = _wait_stop()
-    fullst = get_ext_status()
+    fullst = _GB.dctrl.get_ext_status()
     deg_enc = _to_encoder(deg)
     dist = _ang_dist(deg_enc, fullst['domeaz'])*_GB.todeg
     print(f'stopped at {stat.domeaz:.2f}° (err: {dist:.2f})')
@@ -1717,10 +1731,10 @@ def _test_steps(nsteps, direct):
     'Do some steps'
     if direct.startswith('f'):
         sdir = 'forward'
-        func = step_right
+        func = _GB.dctrl.step_right
     else:
         sdir = 'backward'
-        func = step_left
+        func = _GB.dctrl.step_left
     print(f'Doing {nsteps} steps {sdir} ...', end=' ', flush=True)
     for ist in range(nsteps):
         print(f'{ist+1},', end=' ', flush=True)
@@ -1733,14 +1747,14 @@ def _test_timed(nsecs, direct):
     nsecs = int(nsecs+0.5)
     if direct.startswith('f'):
         sdir = 'forward'
-        func = start_right
+        func = _GB.dctrl.start_right
     else:
         sdir = 'backward'
-        func = start_left
+        func = _GB.dctrl.start_left
     print(f'Going {sdir} for {nsecs} seconds ...', end=' ', flush=True)
     func()
     time.sleep(nsecs)
-    stop()
+    _GB.dctrl.stop()
     stat = _wait_stop()
     print(f'done at {stat.domeaz:.2f}°')
 
@@ -1748,7 +1762,7 @@ def _stresstest():
     'Extensive test'
     print(_STRESS_HELP1)
     _move_cmds()
-    sync_to_azimuth(0)
+    _GB.dctrl.sync_to_azimuth(0)
     print(_STRESS_HELP2)
     _test_goto(87)
     _test_steps(15, 'forward')
@@ -1774,7 +1788,7 @@ def _move_cmds(add_help=None, one_shot=False):      #pylint: disable=R0912
                 print(add_help)
             continue
         if ans[0] == '?':
-            stat = get_status()
+            stat = _GB.dctrl.get_status()
             print('Dome status -  connected:', stat.connected,
                   f'  azimuth: {stat.domeaz:.2f}',
                   f'  targetaz: {stat.targetaz:.2f}',
@@ -1784,44 +1798,44 @@ def _move_cmds(add_help=None, one_shot=False):      #pylint: disable=R0912
                   f'  idletime: {stat.idletime:.2f}')
             continue
         if ans[0] == '<':
-            ret = start_left()
+            ret = _GB.dctrl.start_left()
             _print_err(ret)
             continue
         if ans[0] == '>':
-            ret = start_right()
+            ret = _GB.dctrl.start_right()
             _print_err(ret)
             continue
         if ans[0] == 's':
-            stop()
+            _GB.dctrl.stop()
             continue
         if ans[0] == '+':
-            ret = step_right(0.8)
+            ret = _GB.dctrl.step_right(0.8)
             _print_err(ret)
             continue
         if ans[0] == '-':
-            ret = step_left(0.8)
+            ret = _GB.dctrl.step_left(0.8)
             _print_err(ret)
             continue
         if ans[0] == '++':
-            ret = step_right(2)
+            ret = _GB.dctrl.step_right(2)
             _print_err(ret)
             continue
         if ans[0] == '--':
-            ret = step_left(2)
+            ret = _GB.dctrl.step_left(2)
             _print_err(ret)
             continue
         if ans[0] == 'sl':
             if len(ans) < 2:
                 print('Command error!')
                 continue
-            ret = slew_to_azimuth(ans[1])
+            ret = _GB.dctrl.slew_to_azimuth(ans[1])
             _print_err(ret)
             continue
         if ans[0] == 'q' or one_shot:
             break
     return ans
 
-def _test():                     #pylint: disable=R0912,R0915
+def _test():                     #pylint: disable=R0912,R0915,R0914
     'Test code'
     if '-h' in sys.argv:
         print(__doc__)
@@ -1830,8 +1844,6 @@ def _test():                     #pylint: disable=R0912,R0915
     debug = '-d' in sys.argv
     telsim = '-s' in sys.argv
     alport = _ALP_TEST_PORT if '-a' in sys.argv else 0
-    print()
-    print(get_info())
     print()
     print('Test program')
     print()
@@ -1846,19 +1858,17 @@ def _test():                     #pylint: disable=R0912,R0915
     else:
         tls = None
     try:
-        ret = start_server(ipport=alport, logger=logger, tel_sampler=tls, sim_k8055=ksimul)
-    except IOError:
-        print(_NODEVICE)
+        dct = start_server(ipport=alport, logger=logger, tel_sampler=tls, sim_k8055=ksimul)
+    except Exception as excp:        #pylint: disable=W0703
+        print(excp)
         tls.tel_stop()
         sys.exit()
-    if ret:
-        print('Start error:', ret)
-        tls.tel_stop()
-        sys.exit()
+    print()
+    print(dct.get_info())
     while True:
         ans = _move_cmds(_MORE_HELP, one_shot=True)
         if ans[0] == '??':
-            stat = get_ext_status()
+            stat = dct.get_ext_status()
             keys = list(stat.keys())
             keys.sort()
             print()
@@ -1866,29 +1876,29 @@ def _test():                     #pylint: disable=R0912,R0915
                 print(f' - {key}:', stat[key])
             continue
         if ans[0] == 'os':
-            open_shutter()
+            dct.open_shutter()
             continue
         if ans[0] == 'cs':
-            close_shutter()
+            dct.close_shutter()
             continue
         if ans[0] == 'o':
-            ret = switch(ans[1], False)
+            ret = dct.switch(ans[1], False)
             _print_err(ret)
             continue
         if ans[0] == 'c':
-            ret = switch(ans[1], True)
+            ret = dct.switch(ans[1], True)
             _print_err(ret)
             continue
         if ans[0] == 'sp':
-            ret = set_park()
+            ret = dct.set_park()
             _print_err(ret)
             continue
         if ans[0] == 'p':
-            ret = park()
+            ret = dct.park()
             _print_err(ret)
             continue
         if ans[0] == 'h':
-            ret = find_home()
+            ret = dct.find_home()
             _print_err(ret)
             continue
         if ans[0] == 'f?':
@@ -1896,42 +1906,42 @@ def _test():                     #pylint: disable=R0912,R0915
             print('Log file path:', ret)
             continue
         if ans[0] == 'p?':
-            ret = get_params()
+            ret = dct.get_params()
             print()
             keys = list(ret.keys())
             for key in keys:
                 print(f' - {key}:', ret[key])
             continue
         if ans[0] == 's?':
-            ret = get_shutter()
+            ret = dct.get_shutter()
             print('Shutter status:', ret)
             continue
         if ans[0] == 'r?':
-            stat = get_switch_states()
-            names = get_switch_names()
+            stat = dct.get_switch_states()
+            names = dct.get_switch_names()
             print('Relay status:')
             for nmm, stt in zip(names, stat):
                 print(' ', nmm, stt)
             continue
         if ans[0] == 'sv':
-            ret = set_slave()
+            ret = dct.set_slave()
             _print_err(ret)
             continue
         if ans[0] == 'sy':
-            ret = sync_to_azimuth(ans[1])
+            ret = dct.sync_to_azimuth(ans[1])
             _print_err(ret)
             continue
         if ans[0] == 'i?':
-            ret = get_info()
+            ret = dct.get_info()
             print(ret)
             continue
         if ans[0] == 'stress':
             _stresstest()
             continue
         if ans[0] == 'q':
-            stop()
+            dct.stop()
             tls.tel_stop()
-            stop_server()
+            dct.stop_server()
             break
 
 if __name__ == '__main__':
