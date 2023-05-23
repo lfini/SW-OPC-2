@@ -1940,7 +1940,8 @@ def _test():                     #pylint: disable=R0912,R0915,R0914
             continue
         if ans[0] == 'q':
             dct.stop()
-            tls.tel_stop()
+            if tls:
+                tls.tel_stop()
             dct.stop_server()
             break
 
