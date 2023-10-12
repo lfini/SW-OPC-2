@@ -104,9 +104,9 @@ elif sys.platform == 'win32':
 else:
     raise RuntimeError(f'Unsupported platform: {sys.platform}')
 
-__version__ = '1.4'
+__version__ = '1.5'
 __author__ = 'Luca Fini'
-__date__ = 'March 2023'
+__date__ = 'June 2023'
 
 # pylint: disable=C0413
 
@@ -312,6 +312,7 @@ class _Logger:
                 os.replace(LOGFILENAME, LOGFILEBACK)
         self.logfile = open(LOGFILENAME, 'a', encoding='utf8')  # pylint: disable=R1732
         self.info(f'Logger - logging to file: {LOGFILENAME}')
+        self.filename = LOGFILENAME
 
     def info(self, msg):
         'record a log info'
@@ -1221,7 +1222,6 @@ class DomeController:              #pylint: disable=R0904
             homeaz         Home position in encoder units
             movstat        Moving satus: 0:Idle, 1:Stopping, 2: aiming at target,
                                          3: doing a step, 4: running free
-            parkaz         Parking position in encoder units
             targetaz       Current target azimuth in encoder units
             telstat        Telescope status: 0: cannot slave, 1: azimuth not avaliable
                                              2: telescope ok
@@ -1241,7 +1241,6 @@ class DomeController:              #pylint: disable=R0904
             ret['isslave'] = _GB.isslave
             ret['homeaz'] = _GB.hoffset
             ret['movstat'] = movstat
-            ret['parkaz'] = _GB.parkaz
             ret['targetaz'] = targetaz
             ret['telstat'] = _GB.telstat
         return ret
@@ -1255,7 +1254,7 @@ class DomeController:              #pylint: disable=R0904
         -------
         info : str
         '''
-        return f'OPC dome controller. Vers. {__version__}. {__author__}, {__date__}'
+        return f'OPC dome controller - Vers. {__version__}. {__author__}, {__date__}'
 
     @staticmethod
     def get_params():
@@ -1266,10 +1265,12 @@ class DomeController:              #pylint: disable=R0904
         -------
         params: dict
             canslave       Dome can be slaved to telescope
+            logfile        Logfile name (if any)
             maxerr         Max position error in encoder units
             n360           Number of encoder steps for 360°
             nstart         Encoder counts for acceleration to max speed
             nstop          Encoder steps for deceleration from max speed
+            parkaz         Parking position in encoder units
             t360           Time to do a full 360° turn
             tpoll          Polling period (sec)
             tsafe          Time for safe assess of stopping (sec)
@@ -1284,12 +1285,17 @@ class DomeController:              #pylint: disable=R0904
             ret['n360'] = _GB.n360
             ret['nstart'] = _GB.nstart
             ret['nstop'] = _GB.nstop
+            ret['parkaz'] = _GB.parkaz
             ret['t360'] = _GB.t360
             ret['tpoll'] = _GB.tpoll
             ret['tsafe'] = _GB.tsafe
             ret['tstart'] = _GB.tstart
             ret['tstop'] = _GB.tstop
             ret['vmax'] = _GB.vmax
+            try:
+                ret['logfile'] = _GB.logger.filename
+            except:
+                ret['logfile'] = ''
         return ret
 
     @staticmethod

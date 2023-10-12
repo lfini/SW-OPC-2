@@ -160,6 +160,9 @@ class DomeControl(tk.Frame):                       # pylint: disable=R0901,R0902
         self.vai_b.pack(side=tk.LEFT)
         self.slew_e = Controller(frame1, value=0, lower=0, upper=359, circular=True, bg=DEFAULT_BG)
         self.slew_e.pack(side=tk.LEFT)
+        tk.Label(frame1, text='  ', bg=DEFAULT_BG).pack(side=tk.LEFT, expand=1, fill=tk.BOTH)
+        self.mode_b = tk.Button(frame1, text='M', font=bold, bg=DEFAULT_BG)
+        self.mode_b.pack(side=tk.LEFT)
         frame1.pack(expand=1, fill=tk.X)
         self.mbox = ManualMovements(frame0, self, icon_size, bold)
         self.mbox.pack()
@@ -223,12 +226,14 @@ class DomeControl(tk.Frame):                       # pylint: disable=R0901,R0902
             self.vai_b.config(state=tk.NORMAL)
             self.slew_e.config(state=tk.NORMAL)
             self.slew_e.set(0)
+            self.mode_b.config(text='M')
         else:
             self.mbox.set_manual(False)
             self.obox.set_manual(False)
             self.is_slave.set(True)
             self.vai_b.config(state=tk.DISABLED)
             self.slew_e.config(state=tk.DISABLED)
+            self.mode_b.config(text='S')
 
     def vai_a(self):
         'comando vai a azimuth'
@@ -257,9 +262,9 @@ class DomeControl(tk.Frame):                       # pylint: disable=R0901,R0902
                     self.slew_e.set(dome_stat.targetaz)
             self.after(GUI_REFRESH, self.update_me)
 
-def connect_to_dome(debug, sim_k8055, sim_tel):
+def connect_to_dome(sim_k8055, sim_tel):
     'apre la connessione con cupola'
-    ret = dc.start_server(debug=debug, sim_k8055=sim_k8055, sim_tel=sim_tel)
+    ret = dc.start_server(sim_k8055=sim_k8055, sim_tel=sim_tel)
     return ret
 
 def main():                      # pylint: disable=R0915
@@ -273,7 +278,7 @@ def main():                      # pylint: disable=R0915
     sim_k8055 = '-k' in sys.argv
     sim_tel = '-s' in sys.argv
     GLOB.noslave = '-n' in sys.argv
-    connect_to_dome(debug=debug, sim_k8055=sim_k8055, sim_tel=sim_tel)
+    connect_to_dome(sim_k8055=sim_k8055, sim_tel=sim_tel)
     GLOB.root = tk.Tk()
 
     wdg = DomeControl(GLOB.root, 'm')
