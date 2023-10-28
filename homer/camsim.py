@@ -14,6 +14,7 @@ dove:
      -f sample   Nome file immagine campione (default: ./TestImage.fit)
      -d to_dir   Directory di destinazione (default: ./sci_data)
      -i interval Intervallo fra immagini successive (default: 10 s)
+     -l logname  Nome file di log (default: camsim.log)
      -x x_shift  Max shift in pixel lungo asse x (default: 5)
      -y y_shift  Max shift in pixel lungo asse y (default: 5)
 
@@ -23,6 +24,7 @@ dove:
 
 import sys
 import os
+import shutil
 import random
 import signal
 import getopt
@@ -66,6 +68,7 @@ def main():                        #pylint: disable=R0912,R0915,R0914
         print('Errore argomenti')
         sys.exit()
 
+    logname = 'camsim.log'
     imgfile = 'TestImage.fit'
     destdir = 'sci_data'
     delay = 10
@@ -86,6 +89,8 @@ def main():                        #pylint: disable=R0912,R0915,R0914
             y_shift = int(val)
         elif opt == '-c':
             cancella = True
+        elif opt == '-c':
+            logname = val
 
     if cancella:
         clean(destdir)
@@ -94,36 +99,41 @@ def main():                        #pylint: disable=R0912,R0915,R0914
     print()
     print('CAMSIM - generazione immagini da:', imgfile)
     print(f'  Intervallo: {delay}, Max XY shift: ({x_shift}, {y_shift})')
+    print('Logfile:', logname)
     img0, hd0 = fits.getdata(imgfile, header=True)
 
     signal.signal(2, sghandler)
 
+    imgtempl = os.path.join(destdir, 'img_')+'{0:03d}.fit'
     imgnum = 0
+    shutil.copy(imgfile, imgtempl.format(imgnum))  # copy first image file
     smalld = 0.5
     x_size = img0.shape[1]-2*x_shift
     y_size = img0.shape[0]-2*y_shift
-    while True:
-        wait = int(delay/smalld)
-        while wait:
-            wait -= 1
+    with open(logname, 'w', encoding='utf8') as logfile:
+        while True:
+            imgnum += 1
+            wait = int(delay/smalld)
+            while wait:
+                wait -= 1
+                if not GLOB.goon:
+                    break
+                time.sleep(smalld)
             if not GLOB.goon:
                 break
-            time.sleep(smalld)
-        if not GLOB.goon:
-            break
-        xsh = random.randrange(x_shift+1)
-        ysh = random.randrange(y_shift+1)
-        newimg = img0[ysh:ysh+y_size, xsh:xsh+x_size]
-        imgname = f'img_{imgnum:03d}.fit'
-        imgpath = os.path.join(destdir, imgname)
-        hdu = fits.PrimaryHDU(newimg)
-        for key, value in hd0.items():
-            hdu.header[key] = value
-        hdu.header['NAXIS1'] = x_size
-        hdu.header['NAXIS2'] = y_size
-        hdu.writeto(imgpath)
-        print(f'  Creato file: {imgpath} - XY shift: ({xsh}, {ysh})')
-        imgnum += 1
+            xsh = random.randrange(x_shift+1)
+            ysh = random.randrange(y_shift+1)
+            newimg = img0[ysh:ysh+y_size, xsh:xsh+x_size]
+            imgpath = imgtempl.format(imgnum)
+            hdu = fits.PrimaryHDU(newimg)
+            for key, value in hd0.items():
+                hdu.header[key] = value
+            hdu.header['NAXIS1'] = x_size
+            hdu.header['NAXIS2'] = y_size
+            hdu.writeto(imgpath)
+            log = f'  Creato file: {imgpath} - XY shift: ({xsh}, {ysh})'
+            print(time.strftime('%Y-%m-%d %h:%M:%s'), log, file=logfile)
+            print(log)
     print()
     print('CAMSIM terminato')
     clean(destdir)

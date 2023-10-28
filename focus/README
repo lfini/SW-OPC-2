@@ -1,0 +1,34 @@
+Remotizzazione del controllo del fuoco al secondario
+
+Si è utilizzato l'esistente pulsantiera manuale aggiungendo una coppia di relé
+controllabili tramite USB (vedere figura 'controllore-fuoco.png')
+
+I contatti normalmente aperti dei due relé sono stati collegati in parallelo ai
+corrispondenti contatti dei pulsanti per il controllo manuale.
+
+La pulsantiera è stata collocata sulla culatta del telescopio.
+
+E' stata scritta la procedura python focus.py che consiste in una semplice
+interfaccia grafica che aziona opportunamente i due relé.
+
+La procedura può essere utilizzata direttamente, e sarà in seguito integrata
+in una interfaccia grafica complessiva per il controllo delle osservazioni
+
+La procedura utilizza il modulo python hidapi installabile con il comando "pip"
+sia su windows che su linux.
+
+Windows:
+
+Per utilizzare il modulo hidapi su windows occorre copiare la libreria DLL
+hidapi.dll in una opportuna locazione, scegliandola fra quelle elencate nella
+variabuile di environment %PATH% (visualizzabile con il comando "echo %PATH%"
+da prompt dei comandi)
+
+Linux:
+
+Il modulo hidapi su Linux non richiede altre installazioni, ma di norma l'uso
+della porta USB richiede privilegi di sistema. Allo scopo di consentire l'uso
+ad utente non privilegiato, occorre copiare il file: 70-relay.rules nella
+directory: /etc/udev/rules.d/.
+
+L'accesso non  privilegiato sarà consentito dopo un reboot.
