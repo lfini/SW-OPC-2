@@ -1032,7 +1032,7 @@ def start_server(ipport=0, logger=None, tel_sampler=None, sim_k8055=False):   #p
 
     tel_sampler : TelSampler
         Object provided the telescope sampling capabilities (see info on top of this
-        file
+        file)
 
     sim_k8055 : bool
         use simulation code for k8055 board controller (default: False)
