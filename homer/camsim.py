@@ -6,12 +6,12 @@ di dati con drift del telescopio. Il programma continua a generare immagini fino
 non viene fermato con CTRL-C
 
 uso:
-     python camsim.py [-f sample] [-d to_dir] [-i interval] [-x x_shift] [-y y_shift]
+     python camsim.py [-d to_dir] [-i interval] [-x x_shift] [-y y_shift] cal_image
 
      python camsim.py -c [-d to_dir]
 
 dove:
-     -f sample   Nome file immagine campione (default: ./TestImage.fit)
+     cal_image   Nome file immagine di calibrazione
      -d to_dir   Directory di destinazione (default: ./sci_data)
      -i interval Intervallo fra immagini successive (default: 10 s)
      -l logname  Nome file di log (default: camsim.log)
@@ -55,6 +55,7 @@ def clean(destdir):
         os.unlink(fpath)
     print(f'Cancellati {len(files)} file da:', destdir)
 
+ARGERR = 'Errore argomenti. Usa "-h" per informazioni'
 
 def main():                        #pylint: disable=R0912,R0915,R0914
     'programma principale'
@@ -63,30 +64,27 @@ def main():                        #pylint: disable=R0912,R0915,R0914
         sys.exit()
 
     try:
-        opts = getopt.getopt(sys.argv[1:], 'cf:d:i:x:y:')[0]
+        opts, args = getopt.getopt(sys.argv[1:], 'cd:i:x:y:')
     except getopt.error:
-        print('Errore argomenti')
+        print(ARGERR)
         sys.exit()
 
     logname = 'camsim.log'
-    imgfile = 'TestImage.fit'
     destdir = 'sci_data'
     delay = 10
-    x_shift = 5
+    x_shift = 10
     y_shift = 5
     cancella = False
 
     for opt, val in opts:
-        if opt == '-f':
-            imgfile = val
-        elif opt == '-d':
+        if opt == '-d':
             destdir = val
         elif opt == '-i':
             delay = int(val)
         elif opt == '-x':
-            x_shift = int(val)
+            x_shift = abs(int(val))
         elif opt == '-y':
-            y_shift = int(val)
+            y_shift = abs(int(val))
         elif opt == '-c':
             cancella = True
         elif opt == '-c':
@@ -96,9 +94,14 @@ def main():                        #pylint: disable=R0912,R0915,R0914
         clean(destdir)
         sys.exit()
 
+    if not args:
+        print(ARGERR)
+        sys.exit()
+
+    imgfile = args[0]
     print()
     print('CAMSIM - generazione immagini da:', imgfile)
-    print(f'  Intervallo: {delay}, Max XY shift: ({x_shift}, {y_shift})')
+    print(f'  Intervallo: {delay}, Max XY shift: (+-{x_shift}, +-{y_shift})')
     print('Logfile:', logname)
     img0, hd0 = fits.getdata(imgfile, header=True)
 
@@ -121,8 +124,8 @@ def main():                        #pylint: disable=R0912,R0915,R0914
                 time.sleep(smalld)
             if not GLOB.goon:
                 break
-            xsh = random.randrange(x_shift+1)
-            ysh = random.randrange(y_shift+1)
+            xsh = random.randrange(-x_shift, x_shift+1)
+            ysh = random.randrange(-y_shift, y_shift+1)
             newimg = img0[ysh:ysh+y_size, xsh:xsh+x_size]
             imgpath = imgtempl.format(imgnum)
             hdu = fits.PrimaryHDU(newimg)

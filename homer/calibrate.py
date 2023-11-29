@@ -37,26 +37,54 @@ class MyQueue:                            # pylint: disable=R0903
         "Operazione put sulla coda"
         print("Q:", what)
 
-# Note:
-# Dalle definizioni del WCS:
+class Transformer:                            #pylint: disable=R0903,R0902
+    'Trasforma coordinate da pixel a WCS'
+    def __init__(self, calib_file):
+        try:
+            with open(calib_file, 'r', encoding='utf8') as f_in:
+                calib = json.load(f_in)
+        except Exception as exc:             #pylint: disable=W0703
+            self.error = str(exc)
+            return
+        self.cd_11 = calib['matrix'][0][0]
+        self.cd_12 = calib['matrix'][0][1]
+        self.cd_21 = calib['matrix'][1][0]
+        self.cd_22 = calib['matrix'][1][1]
+        self.imagew = calib['imagew']
+        self.imageh = calib['imageh']
+        self.orient = calib['orient']
+        self.scale = calib['scale']
+        self.error = None
 
-#  CD1_1 = CDELT1 * cos (CROTA2)
-#  CD1_2 = -CDELT2 * sin (CROTA2)
-#  CD2_1 = CDELT1 * sin (CROTA2)
-#  CD2_2 = CDELT2 * cos (CROTA2)
+    def str_matrix(self):
+        'returns transformation matrix as string'
+        if self.error:
+            return '--- error ---'
+        return f'[[{self.cd_11:.6f}, {self.cd_12:.6f}], [{self.cd_21:.6f}, {self.cd_22:.6f}]]'
 
-class CALIB:                #pylint: disable=R0903
-    'Transformation matrix'
-    cd_11 = None
-    cd_12 = None
-    cd_21 = None
-    cd_21 = None
+    def str_scale(self):
+        'returns image scale as string'
+        if self.error:
+            return '--- error ---'
+        return f'{self.scale:.4f}'
 
-def transform(xpix, ypix):
-    'calcola trasformazione pixel/WCS'
-    d_ras = CALIB.cd_11*xpix + CALIB.cd_12*ypix
-    d_dec = CALIB.cd_21*xpix + CALIB.cd_22*ypix
-    return d_ras, d_dec
+    def str_size(self):
+        'returns image size as string'
+        if self.error:
+            return '--- error ---'
+        return f'{self.imagew} x {self.imageh}'
+
+    def str_orient(self):
+        'returns image orientation as string'
+        if self.error:
+            return '--- error ---'
+        return f'{self.orient:.4f}'
+
+    def transform(self, xpix, ypix):
+        'calcola trasformazione pixel/WCS'
+        d_ras = self.cd_11*xpix + self.cd_12*ypix
+        d_dec = self.cd_21*xpix + self.cd_22*ypix
+        return d_ras, d_dec
 
 def parse(fname):
     'Parse lines from astap .ini file'
@@ -134,7 +162,6 @@ def calibrate(impath, outq, savepath, executable=None):    #pylint: disable=R091
     else:
         ret = calibrate_astrometrynet(impath, outq)
         method = 'ASTROMETRY'
-        clear_calibration()
     elaps = time.time()-time0
     if ret:
         outq.put(('LOG', f'Solving process terminated in {elaps:.3f} sec'))
@@ -162,29 +189,9 @@ def calibrate(impath, outq, savepath, executable=None):    #pylint: disable=R091
         with open(savepath, 'w', encoding='utf8') as fout:
             json.dump(solved, fout)
             outq.put(("OK", savepath))
-        set_calibration(solved)
         return solved
     outq.put(('ERR', f'Solving process failed after {elaps:.3f} sec'))
     return None
-
-def clear_calibration():
-    'Reset calibration parameters'
-    CALIB.cd_11 = None
-    CALIB.cd_12 = None
-    CALIB.cd_21 = None
-    CALIB.cd_22 = None
-
-def set_calibration(cal_spec):
-    'Set up calibration data from dict or from json file'
-    if isinstance(cal_spec, str):
-        with open(cal_spec, 'r', encoding='utf8') as f_in:
-            calib = json.load(f_in)
-    else:
-        calib = cal_spec
-    CALIB.cd_11 = calib.matrix[0][0]
-    CALIB.cd_12 = calib.matrix[0][1]
-    CALIB.cd_21 = calib.matrix[1][0]
-    CALIB.cd_22 = calib.matrix[1][1]
 
 def test():
     "Test calibrazione"

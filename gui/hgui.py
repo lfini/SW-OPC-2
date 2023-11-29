@@ -27,19 +27,20 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 # pylint: disable=C0413
 import opc.widgets as wg
 from opc.utils import get_config
-import opc.constants as const
 from opc.logfile import Logger
-from homer.calibrate import calibrate, set_calibration, transform
+from homer.calibrate import calibrate
 from homer import guide
 
 #__version__ = "1.5"   # Corretto errore quando lo shift è negativo
 #__version__ = "1.6"   # Aggiunto log del tempo di ritardo dei comandi al telescopio
-__version__ = "1.7"   # Corretto bug (errore formato log) che bloccava dopo la prima immagine
+#__version__ = "1.7"   # Corretto bug (errore formato log) che bloccava dopo la prima immagine
+
+__version__ = "2.0"   # Nuova versione con plate solving locale ed integrazione nella opc_gui
 
 __author__ = "L. Naponiello, L. Fini"
-__date__ = "Settembre 2022"
+__date__ = "Novembre 2023"
 
-TEST_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "tests", "__work__"))
+TEST_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "__work__"))
 
 NO_CONFIG = """
   File di configurazione mancante o incompleto
@@ -136,7 +137,7 @@ class HomerGUI(tk.Frame):                                   # pylint: disable=R0
         self.tel = None
         self.simul = simul
         self._goon = False
-        self.log = Logger(GLOB.logdir, "homer")
+        self.log = Logger(basedir, 'homer')
         self.log.mark(f"Homer {__version__} started ---------")
         self.sci_root = basedir
         self.aux_root = basedir
@@ -353,7 +354,7 @@ class HomerGUI(tk.Frame):                                   # pylint: disable=R0
         self.aux_cal_start.config(state=tk.DISABLED)
 
     def guider_listener(self):
-        "Listen to guired queue for interactions"
+        "Listen to guider queue for interactions"
         if not self.comm.empty():
             cmd, data = self.comm.get()
             debug(f"from guider: {cmd} - {str(data)}")
@@ -413,7 +414,7 @@ class HomerGUI(tk.Frame):                                   # pylint: disable=R0
         self.guiding = True
         self.guider.start()
 
-    def calibrate(self, what):
+    def calibrate(self, what):                #pylint: disable=R0912,R0915
         "lancia procedura di calibrazione"
         if what == "sci":
             image_path = browse_image(self.sci_dir)
@@ -430,8 +431,8 @@ class HomerGUI(tk.Frame):                                   # pylint: disable=R0
         aqueue = mp.SimpleQueue()
         if self.solve_mode == LOCAL_SOLVE:
             executable = GLOB.config['astap_path']
-        else
-        executable = None
+        else:
+            executable = None
         proc = mp.Process(target=calibrate, args=(image_path, aqueue, out_file, executable))
         proc.start()
         self.write("Calibration process started")
@@ -446,7 +447,7 @@ class HomerGUI(tk.Frame):                                   # pylint: disable=R0
                 elif cmd == 'TMO':
                     tmout = value+5
                     progr = wg.Progress(self, title="Doing calibration",
-                                        duration=SOLVE_TIMEOUT+5, position=(100, 100))
+                                        duration=tmout, position=(100, 100))
                 elif cmd == "ERR":
                     wg.ErrorMsg(self, value, title="Calibration error", position="c")
                     self.write('Calibration error: '+value)
@@ -527,19 +528,15 @@ def main():
         GLOB.root.wait_window(info)
         sys.exit()
 
-    GLOB.logdir = os.path.join(GLOB.config["local_store"], const.LOG_SUBDIR)
-    if not os.path.isdir(GLOB.logdir):
-        os.makedirs(GLOB.logdir)
-
     debug("Homer GUI starting")
     if simulation:
         basedir = TEST_DIR
         mode = " [Simulation]"
     else:
         basedir = GLOB.config["local_store"]
-        if not os.path.exists(basedir):
-            os.makedirs(basedir)
         mode = ""
+    if not os.path.exists(basedir):
+        os.makedirs(basedir)
 
     GLOB.root.title("Homer GUIding v. "+__version__+mode)
     GLOB.root.configure(bg=BG_COL)

@@ -22,10 +22,6 @@ import os
 import time
 import signal
 import multiprocessing as mp
-import astropy.units as u
-from astropy.coordinates import Angle
-from astropy.io import fits
-from astropy.wcs import WCS
 from donuts import Donuts
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -33,6 +29,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 # pylint: disable=C0413
 from opc.utils import get_config
 from opc.telecomm import TeleCommunicator
+from homer.calibrate import Transformer
 
 LOOP_TIME = 0.2    # Tempo di ritardo loop principale (secondi)
 
@@ -42,6 +39,8 @@ HOUR_TO_DEG = 15.0 # Conversione ore->gradi
 SCI_TILES = 32  # Numero di "tiles" da usare nell'inizializzazione
                 # di donuts sull'immagine scientifica
 AUX_TILES = 32  # ... e nell'immagine ausiliaria
+
+ASRATE = 15     # Conversione spostamento "pulse" da arcsec in secondi di durata
 
 class BidirectionalQueue:
     'Supporto per coda bidirezionale'
@@ -77,11 +76,20 @@ class Comm:
 
 class FakeQueue:
     'Simulatore di coda per test'
-    def get(self):
+    @staticmethod
+    def get():
+        'get function'
         print('Fake GET')
 
-    def put(self, what):
+    @staticmethod
+    def put(what):
+        'put function'
         print('Fake PUT:', what)
+
+    @staticmethod
+    def empty():
+        'empty function'
+        return True
 
 class GLOB:                                # pylint: disable=R0903
     "Some global variables without global"
@@ -99,9 +107,18 @@ def tostring(adict):
     ret = []
     for key, value in adict.items():
         if key != "WCS":
-            ret.append(f"{key}: {str(value)}")
+            ret.append(f'{key}: {str(value)}')
     return "{"+", ".join(ret)+"}"
 
+def protect(func):
+    'Decoratore per proteggere da eccezioni'
+    def wrapper(*args, **kwargs):
+        try:
+            ret = func(*args, **kwargs)
+        except Exception:                     #pylint: disable=W0703
+            ret = None
+        return ret
+    return wrapper
 
 def debug(*pars):
     "Show debug lines"
@@ -110,6 +127,8 @@ def debug(*pars):
 
 FITS_EXT = (".fit", ".fits", ".FIT", ".FITS")
 
+
+@protect
 def last_file(dirpath, keep=0):
     "Trova file più recente nella directory"
     all_fits = list(os.path.join(dirpath, x) for x in os.listdir(dirpath) if x.endswith(FITS_EXT))
@@ -129,28 +148,10 @@ def last_file(dirpath, keep=0):
         return last
     return None
 
-def read_calib(calib_file):
-    "Legge file calibrazione e estrae parametri utili"
-    try:
-        calib_hdu = fits.open(calib_file)[0]
-        wcs = WCS(calib_hdu.header)                         # pylint: disable=E1101
-        params = {"WCS": wcs,
-                  "SIZE_X": calib_hdu.header["IMAGEW"],     # pylint: disable=E1101
-                  "SIZE_Y": calib_hdu.header["IMAGEH"],     # pylint: disable=E1101
-                  "CENTER_X": calib_hdu.header["IMAGEW"]/2, # pylint: disable=E1101
-                  "CENTER_Y": calib_hdu.header["IMAGEH"]/2, # pylint: disable=E1101
-                  "ORIENT": calib_hdu.header["ORIENT"],     # pylint: disable=E1101
-                  "ASRATE": 15}
-    except Exception as exc:               # pylint: disable=W0703
-        if GLOB.debug:
-            raise
-        return {}, str(exc)
-    return params, None
-
 def init_donuts(image_file, ntiles, ident):
     "Inizializza Donuts con nuova immagine"
-    debug(f"init_donuts({image_file}, {ntiles}, {ident})")
-    send("LOG", f"[{ident}] Init. donuts on image: {image_file} (ntiles={ntiles})")
+    debug(f'init_donuts({image_file}, {ntiles}, {ident})')
+    send('LOG', f'[{ident}] Init. donuts on image: {image_file} (ntiles={ntiles})')
     try:
         donuts = Donuts(refimage=image_file, image_ext=0, overscan_width=20, prescan_width=20,
                         border=64, normalise=True,
@@ -158,37 +159,27 @@ def init_donuts(image_file, ntiles, ident):
     except Exception as excp:            # pylint: disable=W0703
         if GLOB.debug:
             raise
-        send("LOG", f"[{ident}] *** Error initializing Donuts [{str(excp)}]")
+        send('LOG', f'[{ident}] *** Error initializing Donuts [{str(excp)}]')
         return None
     return donuts
 
 def send(code, what=None):
     "comunica con GUI"
-    debug(f"send({code}, {what})")
+    debug(f'send({code}, {what})')
     GLOB.comm.put((code, what))
 
-def adjust_telescope(wcs, shift_result, calib_params, ident):     # pylint: disable=R0914,R0912,R0915
-    "Corregge posizione telescopio"
-                        # Converto coordinate centro immmagine in RA, DEC
-    arcsec_rate = calib_params["ASRATE"]
-    ra0, dec0 = wcs.all_pix2world([[calib_params['CENTER_X'],
-                                    calib_params['CENTER_Y']]], 0)[0]
-                        # Converto coordinate centro immagine + shift(x,y) in RA,DEC
-    xx1 = calib_params['CENTER_X']+shift_result.x.value
-    yy1 = calib_params['CENTER_Y']+shift_result.y.value
-    ra1, dec1 = wcs.all_pix2world([[xx1, yy1]], 0)[0]
-                    # Calcolo lo shift
-    ra_shift, de_shift = ra1-ra0, dec1-dec0
-    ras, dec = Angle(-ra_shift, u.degree), Angle(-de_shift, u.degree)
-                    # Comunica valori di ricentraggio
-    send("LOG", f'[{ident}] Computed move (RA, DEC): '
-                f'({ras.to_string(unit=u.arcsec)}, {dec.to_string(unit=u.arcsec)})')
-                    # Controlla che lo spostamento non sia eccessivo
-    if abs(ras.arcmin) > 4 or abs(dec.arcmin) > 4:
-        send("LOG", f'[{ident}] *** Error: RA/DE shift higher than 4 arcmins... guiding stopped')
+def adjust_tel(trans, xsh, ysh, ident):     #pylint: disable=R0914,R0912,R0915
+    "Calcola e corregge posizione telescopio"
+    ra_shift, de_shift = trans.transform(xsh, ysh)    # Calcolo aggiustamento
+    send('LOG', f'[{ident}] Computed move (RA, DEC): '
+         f'({ra_shift:.2f}, {de_shift:.2f}) arcsec')
+    ra_abs, de_abs = abs(ra_shift), abs(de_shift)    # Controlla spostamento eccessivo
+    if ra_abs > 120 or de_abs > 120:
+        send('LOG', f'[{ident}] *** Error: RA/DE shift higher than 2 arcmins... guiding stopped')
         return False
                     # Ricentro il telescopio  in A.R.
-    duration = int(1000*abs(ras.arcsec)/arcsec_rate)
+    moved = False
+    duration = int(1000*ra_abs/ASRATE)
     if 20 < duration < 16399:
         if ra_shift <= 0:
             direct = "east"
@@ -196,19 +187,20 @@ def adjust_telescope(wcs, shift_result, calib_params, ident):     # pylint: disa
         else:
             direct = "west"
             mover = GLOB.tel.pulse_guide_west
-        send("LOG", f"[{ident}] Pulse guide {direct} {duration}")
+        send('LOG', f'[{ident}] Pulse guide {direct} {duration}')
+        moved = True
         time0 = time.time_ns()
         stat = mover(duration)
         time1 = time.time_ns()
         delay = (time1-time0)*0.000001
         if stat != '':
-            send("LOG", f'[{ident}] *** Error: {GLOB.tel.last_error()} [delay: {delay:.3f} ms]')
+            send('LOG', f'[{ident}] *** Error: {GLOB.tel.last_error()} [delay: {delay:.3f} ms]')
         else:
-            send("LOG", f'[{ident}] Pulse guide {direct} - OK [delay: {delay:.3f} ms]')
+            send('LOG', f'[{ident}] Pulse guide {direct} - OK [delay: {delay:.3f} ms]')
     else:
-        send("LOG", f'[{ident}] Telescope not moved in RA. Pulse was: {duration}')
+        send('LOG', f'[{ident}] Telescope not moved in RA. Pulse was: {duration}')
                     # Ricentro il telescopio  in DEC.
-    duration = int(1000*abs(dec.arcsec)/arcsec_rate)
+    duration = int(1000*de_abs/ASRATE)
     if 20 < duration < 16399:
         if de_shift <= 0:
             direct = "north"
@@ -216,24 +208,27 @@ def adjust_telescope(wcs, shift_result, calib_params, ident):     # pylint: disa
         else:
             direct = "south"
             mover = GLOB.tel.pulse_guide_south
-        send("LOG", f"[{ident}] Pulse guide {direct} {duration}")
+        send('LOG', f'[{ident}] Pulse guide {direct} {duration}')
+        moved = True
         time0 = time.time_ns()
         stat = mover(duration)
         time1 = time.time_ns()
         delay = (time1-time0)*0.000001
         if stat != '':
-            send("LOG", f'[{ident}] *** Error: {GLOB.tel.last_error()} [delay: {delay:.3f} ms]')
+            send('LOG', f'[{ident}] *** Error: {GLOB.tel.last_error()} [delay: {delay:.3f} ms]')
         else:
-            send("LOG", f'[{ident}] Pulse guide {direct} - OK [delay: {delay:.3f} ms]')
+            send('LOG', f'[{ident}] Pulse guide {direct} - OK [delay: {delay:.3f} ms]')
     else:
-        send("LOG", f'[{ident}] Telescope not moved in DE. Pulse was: {duration}')
-
-    while GLOB.tel.get_status() == 'n':
-        send("LOG", f'[{ident}] Telescope moving...')
-        time.sleep(0.5)
+        send('LOG', f'[{ident}] Telescope not moved in DE. Pulse was: {duration}')
+    if moved:
+        while GLOB.tel.get_status() == 'n':
+            send('LOG', f'[{ident}] Telescope moving...')
+            time.sleep(0.5)
                     # Invia comando sync al telescopio
-    GLOB.tel.sync_radec()
-    return True, ras, dec
+        send('LOG', f'[{ident}] Telescope sync')
+        GLOB.tel.sync_radec()
+    return True
+
 def guideloop(comm_serv, sci_dir, sci_calib, sci_tiles,      # pylint: disable=R0912,R0915,R0913,R0914
               aux_dir, aux_calib, aux_tiles, simul, debug_on):
     """
@@ -265,11 +260,11 @@ def guideloop(comm_serv, sci_dir, sci_calib, sci_tiles,      # pylint: disable=R
     GLOB.comm = comm_serv
     config = get_config(simul=simul)
     if simul:
-        send("LOG", "Connecting to telescope simulator")
+        send('LOG', "Connecting to telescope simulator")
     else:
-        send("LOG", "Connecting to telescope")
+        send('LOG', "Connecting to telescope")
     if not config:
-        send("LOG", "*** Error: No configuration file")
+        send('LOG', "*** Error: No configuration file")
         send("TERM")
         return
     GLOB.tel = TeleCommunicator(config["tel_ip"], config["tel_port"],
@@ -277,42 +272,43 @@ def guideloop(comm_serv, sci_dir, sci_calib, sci_tiles,      # pylint: disable=R
     ra_deg = GLOB.tel.get_target_rah()
     de_deg = GLOB.tel.get_target_deh()
     if ra_deg is None or de_deg is None:
-        send("LOG", "*** Error: telescope not responding")
+        send('LOG', "*** Error: telescope not responding")
         send("TERM")
         return
     ra_deg *= HOUR_TO_DEG
     if not os.path.isdir(sci_dir):
-        send("LOG", f"*** Error: directory not found ({sci_dir})")
+        send('LOG', f'*** Error: directory not found ({sci_dir})')
         send("TERM")
         return
-    sci_calib_params, error = read_calib(sci_calib)
-    if not sci_calib_params:
-        send("LOG", f"[sci] *** Error on calibration file [{error}]")
+    sci_trans = Transformer(sci_calib)
+    if sci_trans.error:
+        send('LOG', f'[sci] *** Error on calibration file [{sci_trans.error}]')
         send("TERM")
         return
-    send("LOG", "[sci] Calib.params: "+tostring(sci_calib_params))
+    send('LOG', "[sci] Calib.matrix: "+sci_trans.str_matrix())
+    send('LOG', "[sci] Image scale: "+sci_trans.str_scale())
+    send('LOG', "[sci] Image size: "+sci_trans.str_size())
+    send('LOG', "[sci] Image orient.: "+sci_trans.str_orient())
     debug("Science calibration file OK")
-    sci_wcs = sci_calib_params["WCS"]
     if aux_dir:
         if not os.path.isdir(aux_dir):
-            send("LOG", f"[aux] *** Error: directory not found ({aux_dir})")
+            send('LOG', f'[aux] *** Error: directory not found ({aux_dir})')
             send("TERM")
             return
-        aux_calib_params, error = read_calib(aux_calib)
-        if not aux_calib_params:
-            send("LOG", f"[aux] *** Error reading calibration file [{error}]")
+        aux_trans = Transformer(aux_calib)
+        if aux_trans.error:
+            send('LOG', f'[aux] *** Error reading calibration file [{aux_trans.error}]')
             send("TERM")
             return
-        send("LOG", "[aux] Calib.params: "+tostring(aux_calib_params))
+        send('LOG', "[aux] Calib.params: "+str(aux_trans))
         debug("Aux calibration file OK")
-        aux_wcs = aux_calib_params["WCS"]
-    send("ORNT", sci_calib_params["ORIENT"])
-    guard_x = sci_calib_params["SIZE_X"]/10
-    guard_y = sci_calib_params["SIZE_Y"]/10
+    send("ORNT", sci_trans.orient)
+    guard_x = sci_trans.imagew/10
+    guard_y = sci_trans.imageh/10
     sci_donuts = None
     aux_donuts = None
-    first_sci_image = None
-    first_aux_image = None
+    first_sci_im = None
+    first_aux_im = None
     while GLOB.loop:                 # pylint: disable=R1702
         time.sleep(LOOP_TIME)
         if not GLOB.comm.empty():
@@ -320,80 +316,73 @@ def guideloop(comm_serv, sci_dir, sci_calib, sci_tiles,      # pylint: disable=R
             debug("Input command:", cmd)
             if cmd == "STOP":
                 break
-            send("LOG", "*** Error: illegal command: "+str(cmd))
+            send('LOG', "*** Error: illegal command: "+str(cmd))
         if not sci_donuts: # Aspetta prima immagine utile
-            first_sci_image = last_file(sci_dir)
-            if first_sci_image:
-                send("LOG", "[sci] First image: "+first_sci_image)
-                sci_donuts = init_donuts(first_sci_image, sci_tiles, "sci")
+            first_sci_im = last_file(sci_dir)
+            if first_sci_im:
+                send('LOG', "[sci] First image: "+first_sci_im)
+                sci_donuts = init_donuts(first_sci_im, sci_tiles, "sci")
                 if not sci_donuts:
                     send("TERM")
                     break
-                last_sci_image = first_sci_image
+                last_sci_im = first_sci_im
             continue
-        next_sci_image = last_file(sci_dir)
-        if next_sci_image != last_sci_image:
-            send("LOG", "[sci] New image: "+str(next_sci_image))
-            last_sci_image = next_sci_image
+        next_sci_im = last_file(sci_dir)
+        if next_sci_im and (next_sci_im != last_sci_im):
+            send('LOG', "[sci] New image: "+str(next_sci_im))
+            last_sci_im = next_sci_im
 
-            # Donuts calcola lo shift dell'ultima immagine da quella di riferimento
+            # Calcolo shift su immagine scientifica
             try:
-                shift_result = sci_donuts.measure_shift(last_sci_image)
+                shift_result = sci_donuts.measure_shift(last_sci_im)
             except Exception as excp:            # pylint: disable=W0703
                 if GLOB.debug:
                     raise
-                send("LOG", f'[sci] Donuts error on last image [{str(excp)}]')
-            else:
-                aux_donuts = None
-                send("LOG", "[sci] Computed shift (X, Y): "
-                           f"({shift_result.x.value:.2f}, {shift_result.y.value:.2f})")
-                send("SHIFT", (shift_result.x.value, shift_result.y.value))
-                abs_x, abs_y = abs(shift_result.x.value), abs(shift_result.y.value)
-                flag = 0
-                if abs_x > guard_x or abs_y > guard_y:  # reinizializza Donuts in caso di drift
-                    send("LOG", "[sci] Recentering Donuts")
-                    sci_donuts = init_donuts(last_sci_image, sci_tiles, "sci")
-                    if not sci_donuts:
-                        send("TERM")
-                        break
-                    flag = 4
-                # Movimento telescopio
-                adjusted = adjust_telescope(sci_wcs, shift_result, sci_calib_params, "sci")
-                if adjusted is None:
+                send('LOG', f'[sci] Donuts error on last image [{str(excp)}]')
+                continue
+            aux_donuts = None
+            xsh, ysh = shift_result.x.value, shift_result.y.value
+            send('LOG', f'[sci] Computed shift (X, Y): ({xsh:.1f}, {ysh:.1f})')
+            send("SHIFT", (xsh, ysh))
+            abs_x, abs_y = abs(xsh), abs(ysh)
+            if abs_x > guard_x or abs_y > guard_y:  # reinizializza Donuts in caso di drift
+                send('LOG', "[sci] Recentering Donuts")
+                sci_donuts = init_donuts(last_sci_im, sci_tiles, "sci")
+                if not sci_donuts:
                     send("TERM")
                     break
-                flag += 2 if adjusted else 0
+            adjusted = adjust_tel(sci_trans, xsh, ysh, "sci")   # Movimento telescopio
+            if not adjusted:
+                send("TERM")
+                break
         elif aux_dir:                # Aggiusta con guida ausiliaria
             if not aux_donuts:
-                first_aux_image = last_file(aux_dir, keep=3)
-                send("LOG", "[aux] First image: "+first_aux_image)
-                aux_donuts = init_donuts(first_aux_image, aux_tiles, "aux")
-                if aux_donuts:
-                    last_aux_image = first_aux_image
+                first_aux_im = last_file(aux_dir, keep=3)
+                if first_aux_im:
+                    send('LOG', "[aux] First image: "+first_aux_im)
+                    aux_donuts = init_donuts(first_aux_im, aux_tiles, "aux")
+                    if aux_donuts:
+                        last_aux_im = first_aux_im
                 continue
-            if aux_donuts:
-                next_aux_image = last_file(aux_dir, keep=3)
-                if next_aux_image != last_aux_image:
-                    send("LOG", "[aux] New image: "+str(next_aux_image))
-                    last_aux_image = next_aux_image
-                    # Calcolo shift su immagine ausiliaria
-                    try:
-                        shift_result = aux_donuts.measure_shift(last_aux_image)
-                    except Exception as excp:            # pylint: disable=W0703
-                        if GLOB.debug:
-                            raise
-                        send("LOG", f'[aux] Donuts error on last image [{str(excp)}]')
-                    else:
-                        flag = 1
-                        send("LOG", "[aux] Calculated shift on (X,Y) axes are: "
-                                f"({shift_result.x.value:.2f}, {shift_result.y.value:.2f})")
-                        send("SHIFT", (shift_result.x.value, shift_result.y.value))
-                        abs_x, abs_y = abs(shift_result.x.value), abs(shift_result.y.value)
-                        adjusted = adjust_telescope(aux_wcs, shift_result,
-                                                    aux_calib_params, "aux")
-                        if not adjusted:
-                            aux_donuts = None
-                        flag += 2 if adjusted else 0
+            next_aux_im = last_file(aux_dir, keep=3)
+            if next_aux_im and (next_aux_im != last_aux_im):
+                send('LOG', "[aux] New image: "+str(next_aux_im))
+                last_aux_im = next_aux_im
+                # Calcolo shift su immagine ausiliaria
+                try:
+                    shift_result = aux_donuts.measure_shift(last_aux_im)
+                except Exception as excp:            # pylint: disable=W0703
+                    if GLOB.debug:
+                        raise
+                    send('LOG', f'[aux] Donuts error on last image [{str(excp)}]')
+                    continue
+                xsh, ysh = shift_result.x.value, shift_result.y.value
+                send('LOG', '[aux] Computed shift (X, Y): ({xsh:.2f}, {ysh:.2f})')
+                send("SHIFT", (xsh, ysh))
+                abs_x, abs_y = abs(xsh), abs(ysh)
+                adjusted = adjust_tel(aux_trans, xsh, ysh, "aux")   # Movimento telescopio
+                if not adjusted:
+                    aux_donuts = None
 
 def test():
     "Procedura di test"

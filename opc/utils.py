@@ -43,12 +43,14 @@ def store_config(config):
         msg_text = ''
     return msg_text
 
-def make_logname(logtag, ext='log'):
+def make_logname(logtag, onlydir=False, ext='log'):
     'genera nome per file di log'
     config = get_config()
     ldir = os.path.abspath(os.path.join(config['local_store'], const.LOG_SUBDIR))
     if not os.path.isdir(ldir):
         os.makedirs(ldir)
+    if onlydir:
+        return ldir
     lnam = time.strftime("%Y-%m-%d-")+logtag+'.'+ext
     return os.path.join(ldir, lnam)
 
