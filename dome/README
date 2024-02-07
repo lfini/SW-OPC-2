@@ -8,8 +8,8 @@ Descrizione fiiles:
 alpaca_test.py     - Cliente per test della API alpaca implementata in dome_ctrl.py
 dome_calib.py      - Procedura per la misura dei parametri di calibrazione
 dome_ctrl.py       - controller cupola, usabile come modulo o standalone
-dome_data.json     - file generato da dome_calib.py
-dome_dyn.json      - file generato da dome_calib.py
+dome_data.json     - file generato da dome_calib.py. Valori validi per cupola OPC
+dome_dyn.json      - file generato da dome_calib.py. Valori validi per cupola OPC
 dome_gui.py        - GUI per dome_ctrl.py. Non funzionante ancora e richiede vari moduli
                      specifici per OPC
 domelogger.py      - sottomodulo di dome_ctrl.py

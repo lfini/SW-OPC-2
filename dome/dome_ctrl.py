@@ -4,13 +4,14 @@ dome_ctrl.py - Thread based program for K8055 based Gambato dome controller
 
 Test mode:
 
-    python dome_ctrl.py [-a] [-d] [-h] [-k] [-s]
+    python dome_ctrl.py [-a] [-d] [-h] [-i] [-k] [-s]
 
 where:
 
     [-a]   enable Alpaca server function
     [-d]   set debug mode for dome controller
     [-h]   print this help page and exit
+    [-i]   set italian for error messages
     [-k]   use K8055 simulator
     [-s]   use telescope simulator
 '''
@@ -19,7 +20,7 @@ where:
 # Support for slave mode
 #
 # In order to allow the operation in slave mode, an external module must be provided
-# with name: "tel_sampler.py"
+# with name: "telsamp.py"
 
 # The module must implement a function:
 
@@ -72,16 +73,16 @@ THIS_DIR = os.path.abspath(os.path.dirname(__file__))
 sys.path.insert(0, os.path.abspath(os.path.join(THIS_DIR, "..")))
 
 # pylint: disable=C0413
-try:                               # Try importing local tel_sampler
-    import tel_sampler as ts
+try:                               # Try importing local telsamp
+    import telsamp as ts
 except ImportError:
     TEL_SAMPLER = False
 else:
     TEL_SAMPLER = True
 
 if not TEL_SAMPLER:
-    try:                                    # Try importing tel_sampler from opc environment
-        from opc import tel_sampler as ts
+    try:                                    # Try importing telsamp from opc environment
+        from opc import telsamp as ts
     except ImportError:
         TEL_SAMPLER = False
     else:
@@ -102,32 +103,49 @@ elif sys.platform == 'win32':
     from ctypes import cdll
     HANDLE = cdll.LoadLibrary(DLL_PATH)
 else:
-    raise RuntimeError(f'Unsupported platform: {sys.platform}')
+    raise RuntimeError('Unsupported: '+sys.platform)
 
-__version__ = '1.5'
+__version__ = '1.7'
 __author__ = 'Luca Fini'
-__date__ = 'June 2023'
+__date__ = 'February 2024'
 
 # pylint: disable=C0413
 
 DEBUG_LOCK = False    # set to true to enable deadlock debugging mode
 
 _PULSE_TIME = 1       # Duration of pulsed relais for open/close shutter (sec)
-_SAMPLE_PERIOD = 1    # period of position logging
+_SAMPLE_PERIOD = 2    # period of position logging
+_CHECK_PERIOD = 1     # period of connection checking
 
-_ALPACA_THREAD_ERROR = 'Dome - Alpaca server thread did not start'
-_ALREADY_RUNNING = 'Dome - server is running'
-_CANT_EXECUTE = 'Dome - cannot execute command'
-_CANT_SAVE_STATUS = 'Dome - cannot save dome status'
-_DOME_THREAD_ERROR = 'Dome - controller thread did not start'
-_NA = 'N.A.'
-_NO_DOME_DATA = 'Dome - calibration data file missing'
 _NO_ERROR = ''
-_TEL_OK = 'Dome - azimuth from tel. OK'
-_UNCONNECTED = 'Dome - server not connected'
-_UNCONFIGURED = 'Dome - configuration parameter missing'
-_UNIMPLEMENTED = 'Dome - function not yet implemented'
-_VALUE_ERROR = 'Dome - value error'
+
+class ENGLISH:             #pylint: disable=R0903
+    'English messages'
+    ALPACA_THREAD_ERROR = 'Dome - Alpaca server thread did not start'
+    ALREADY_RUNNING = 'Dome - server is running'
+    CANT_EXECUTE = 'Dome - busy, cannot execute command'
+    CANT_OPEN_DEVICE = 'Dome - cannot open device'
+    CANT_SAVE_STATUS = 'Dome - error saving dome status'
+    DOME_THREAD_ERROR = 'Dome - controller thread did not start'
+    NO_DOME_DATA = 'Dome - calibration data file missing'
+    UNCONNECTED = 'Dome - server not connected'
+    UNCONFIGURED = 'Dome - configuration parameter missing'
+    UNIMPLEMENTED = 'Dome - function not yet implemented'
+    VALUE_ERROR = 'Dome - value error'
+
+class ITALIAN:             #pylint: disable=R0903
+    'Italian messages'
+    ALPACA_THREAD_ERROR = 'Cupola - Thread di supporto Alpaca non attivato'
+    ALREADY_RUNNING = 'Cupola - server già attivo'
+    CANT_EXECUTE = 'Cupola - operazione in corso: comando non eseguibile'
+    CANT_OPEN_DEVICE = 'Cupola - errore di connessione'
+    CANT_SAVE_STATUS = 'Cupola - stato corrente cupola non salvato'
+    DOME_THREAD_ERROR = 'Cupola - thread di controllo non attivato'
+    NO_DOME_DATA = 'Cupola - stato cupola non presente'
+    UNCONNECTED = 'Cupola - server non connesso'
+    UNCONFIGURED = 'Cupola - parametro di configurazione non definito'
+    UNIMPLEMENTED = 'Cupola - operazione non ancora implementata'
+    VALUE_ERROR = 'Cupola - valore errato'
 
 _N_SWITCHES = 4
 
@@ -225,15 +243,18 @@ class _GB:                  # pylint: disable=R0903
     alpaca = None        # Thread running Alpaca server
     al_server = None     # HTTPserver for Alpaca
     al_transid = 1       # Alpaca server transaction id
-    dc_debug = False     # Debug mode for dome controller
+    connected = False    # True when K8055 board is responding
+    debug = False        # Debug mode for dome controller
     dctrl = None
     logger = None        # Main logger
     handle = HANDLE
     data_file = ''       # name of dome data file
     ipport = 0           # IP port for Alpaca server
+    language = ENGLISH   # Language for messages
     loop = True
     server = None        # Serving Thread
     tsample = 0          # Position sampling time for debug
+    tcheck = 0           # Connection checking time
     movstat = IDLE       # Status of movement: IDLE(0): idle,
                          #                     STOPPING(1): stopping,
                          #                     AIMING(2): aiming at target,
@@ -271,7 +292,7 @@ class _GB:                  # pylint: disable=R0903
     parkaz = None        # Park position (encoder steps)
     tpoll = None         # Main loop polling time (seconds)
 
-    tel_sampler = None   # Telescope sampler
+    telsamp = None   # Telescope sampler
 
 class _AFTER:                  # pylint: disable=R0903
     'support for timers'
@@ -295,40 +316,40 @@ class _STAT:                  # pylint: disable=R0903
     movstat = None        # Movment status:
     targetaz = -1         # Current target azimnuth (degrees)
 
-class _NoLogger:
-    'dummy logger'
-    def info(self, _unused):
-        'do not record a log info'
-    def error(self, _unused):
-        'do not record a log error'
+def _debug(msg):
+    'Show debug message'
+    if _GB.debug:
+        print('DCT DBG>', msg)
 
 class _Logger:
     'standalone logger'
-    def __init__(self, debug):
-        self.debug = debug
-        if os.path.exists(LOGFILENAME):
-            logsize = os.stat(LOGFILENAME).st_size
-            if logsize > LOGSIZEMAX:
-                os.replace(LOGFILENAME, LOGFILEBACK)
-        self.logfile = open(LOGFILENAME, 'a', encoding='utf8')  # pylint: disable=R1732
-        self.info(f'Logger - logging to file: {LOGFILENAME}')
-        self.filename = LOGFILENAME
+    def __init__(self, enable):
+        if  enable:
+            if os.path.exists(LOGFILENAME):
+                logsize = os.stat(LOGFILENAME).st_size
+                if logsize > LOGSIZEMAX:
+                    os.replace(LOGFILENAME, LOGFILEBACK)
+            self.logfile = open(LOGFILENAME, 'a', encoding='utf8')  # pylint: disable=R1732
+            msg = f'Logger - logging to file: {LOGFILENAME}'
+            _debug(msg)
+            self.info(msg)
+            self.filename = LOGFILENAME
+        else:
+            self.logfile = None
 
     def info(self, msg):
         'record a log info'
+        _debug('Info: '+msg)
         if self.logfile:
             tstamp = datetime.now().isoformat(sep=' ', timespec='milliseconds')
             print(tstamp, 'Info:', msg, file=self.logfile)
-        if self.debug:
-            print('DBG>', 'Info:', msg)
 
     def error(self, msg):
         'record a log error'
+        _debug('Err: '+msg)
         if self.logfile:
             tstamp = datetime.now().isoformat(sep=' ', timespec='milliseconds')
             print(tstamp, 'Error:', msg, file=self.logfile)
-        if self.debug:
-            print('DBG>', 'Error:', msg)
 
 def _sample(cnt):
     'Record periodic status'
@@ -371,11 +392,11 @@ def _ang_dist(ang1, ang2):
 def _start_lk(direct, tstep=None):
     'Start movement (to protect with lock)'
     _GB.logger.info(f'Dome - _start_lk({direct}, {tstep})')
-    if not _GB.handle:
-        return _UNCONNECTED
+    if not _GB.connected:
+        return _GB.language.UNCONNECTED
     if _GB.movstat != IDLE:
-        _GB.logger.error(_CANT_EXECUTE)
-        return _CANT_EXECUTE
+        _GB.logger.error(ENGLISH.CANT_EXECUTE)
+        return _GB.language.CANT_EXECUTE
     safe_clear_counter(_GB.handle)
     _GB.saveaz = _GB.domeaz
     _GB.direct = direct
@@ -388,7 +409,6 @@ def _start_lk(direct, tstep=None):
         _after(tstep, _end_step)
         _GB.movstat = STEPPING
     return _NO_ERROR
-
 
 def _stop_lk(reason):
     'stop movement (to protect with lock)'
@@ -424,71 +444,91 @@ def _end_step():
         if _GB.stopcn < 0:
             _stop_lk('_end_step')
 
+def _check_connection():
+    'Check connection status'
+    _GB.connected = _GB.handle.SearchDevices() > 0
+    return _GB.connected
+
 def _dome_loop():                          #pylint: disable=R0912,R0915
     'Dome status update loop (executed as Thread)'
     _GB.logger.info('Dome - control loop starting')
-    pollsec = _GB.tpoll
+    while _GB.loop:
+        _GB.logger.info('Dome - checking connection status')
+        with _GB.dome_lock:
+            if _check_connection():
+                _GB.logger.info('Dome - connection established')
+                break
+        time.sleep(1)
+    if not _GB.connected:
+        _GB.logger.info('Dome - control loop terminated while not connected')
+        return
     _GB.handle.ClearAllDigital()     # set a known status
     while _GB.loop:
         tstart = time.time()
-        if _GB.handle:
-            _exec_timers(tstart)
-            with _GB.dome_lock:
-                cnt = _GB.handle.ReadCounter(ENCODER)                # update current position
-                if _GB.direct == RIGHT_MOVE:
-                    _GB.domeaz = int((_GB.saveaz+cnt)%_GB.n360)
-                elif _GB.direct == LEFT_MOVE:
-                    _GB.domeaz = int((_GB.saveaz-cnt)%_GB.n360)
-                if tstart > _GB.tsample and _GB.movstat != IDLE:    # periodically log
-                                                                     # current position
-                    _sample(cnt)
-                    _GB.tsample = tstart+_SAMPLE_PERIOD
-                if _GB.canslave:
-                    azh = _GB.tel_sampler.az_from_tel()
-                    if azh < 0.0:
-                        _GB.telstat = _NO_AZIMUTH
-                    else:
-                        _GB.telstat = _TEL_OK
+        _exec_timers(tstart)
+        with _GB.dome_lock:
+            if tstart > _GB.tcheck:                       # periodically check connection
+                if not _check_connection():
+                    break
+                _GB.tcheck = tstart+_CHECK_PERIOD
+            cnt = _GB.handle.ReadCounter(ENCODER)                # update current position
+            if _GB.direct == RIGHT_MOVE:
+                _GB.domeaz = int((_GB.saveaz+cnt)%_GB.n360)
+            elif _GB.direct == LEFT_MOVE:
+                _GB.domeaz = int((_GB.saveaz-cnt)%_GB.n360)
+            if tstart > _GB.tsample and _GB.movstat != IDLE:    # periodically log
+                                                                # current position
+                _sample(cnt)
+                _GB.tsample = tstart+_SAMPLE_PERIOD
+            if _GB.canslave:
+                azh = _GB.telsamp.az_from_tel()
+                if azh < 0.0:
+                    _GB.telstat = _NO_AZIMUTH
                 else:
-                    azh = -1
-                if _GB.isslave:                                     # manage slave mode
-                    if azh < 0.0:
-                        _GB.targetaz = -1
-                    else:
-                        _GB.targetaz = _to_encoder(azh)
-                if _GB.telstat != _GB.telsave:
-                    _GB.logger.info(f'Dome - tel. status now: {_GB.telstat}')
-                    _GB.telsave = _GB.telstat
-                if _GB.targetaz < 0:
-                    dst, adst = 0.0, 0.0
+                    _GB.telstat = _TEL_OK
+            else:
+                azh = -1
+            if _GB.isslave:                                     # manage slave mode
+                if azh < 0.0:
+                    _GB.targetaz = -1
                 else:
-                    dst = _ang_dist(_GB.targetaz, _GB.domeaz)
-                    adst=abs(dst)
-                if _GB.movstat == IDLE:
-                    if adst > _GB.nstop:
-                        direct = RIGHT_MOVE if dst > 0 else LEFT_MOVE
-                        _GB.logger.info(f'Dome - Start movement (dist={dst})')
-                        _start_lk(direct)
-                    elif adst > _GB.maxerr:
-                        direct = RIGHT_MOVE if dst > 0 else LEFT_MOVE
-                        pls = _GB.ptable[adst]
-                        _GB.logger.info('Dome - Stepping to final position '
-                                        f'(dist={dst}, pulse={pls:.2f})')
-                        _start_lk(direct, tstep=pls)
-                    else:
-                        _GB.targetaz = -1
-                elif _GB.movstat == AIMING:
-                    if adst < _GB.nstop:
-                        _stop_lk('Approaching target')
-                    else:
-                        direct = RIGHT_MOVE if dst > 0 else LEFT_MOVE
-                        if direct != _GB.direct:
-                            _stop_lk('Wrong direction')
-        nextpoll = pollsec - (time.time()-tstart)
-        _GB.idletime = nextpoll/pollsec
+                    _GB.targetaz = _to_encoder(azh)
+            if _GB.telstat != _GB.telsave:
+                _GB.logger.info(f'Dome - tel. status now: {_GB.telstat}')
+                _GB.telsave = _GB.telstat
+            if _GB.targetaz < 0:
+                dst, adst = 0.0, 0.0
+            else:
+                dst = _ang_dist(_GB.targetaz, _GB.domeaz)
+                adst=abs(dst)
+            if _GB.movstat == IDLE:
+                if adst > _GB.nstop:
+                    direct = RIGHT_MOVE if dst > 0 else LEFT_MOVE
+                    _GB.logger.info(f'Dome - Start movement (dist={dst})')
+                    _start_lk(direct)
+                elif adst > _GB.maxerr:
+                    direct = RIGHT_MOVE if dst > 0 else LEFT_MOVE
+                    pls = _GB.ptable[adst]
+                    _GB.logger.info('Dome - Stepping to final position '
+                                    f'(dist={dst}, pulse={pls:.2f})')
+                    _start_lk(direct, tstep=pls)
+                else:
+                    _GB.targetaz = -1
+            elif _GB.movstat == AIMING:
+                if adst < _GB.nstop:
+                    _stop_lk('Approaching target')
+                else:
+                    direct = RIGHT_MOVE if dst > 0 else LEFT_MOVE
+                    if direct != _GB.direct:
+                        _stop_lk('Wrong direction')
+        nextpoll = _GB.tpoll - (time.time()-tstart)
+        _GB.idletime = nextpoll/_GB.tpoll
         if nextpoll>0:
             time.sleep(nextpoll)
-    _GB.logger.info('Dome - control loop terminated')
+    if _GB.connected:
+        _GB.logger.info('Dome - control loop terminated')
+    else:                 # K8055 not connected
+        _GB.logger.error('Dome - control loop terminated for connection error')
 
 ###### API support functions
 
@@ -499,8 +539,8 @@ def _to_encoder(azh):
 def _start_pulse(n_rele, p_time):
     'Start a pulsed rele'
     _GB.logger.info(f'Dome - _start_pulse({n_rele}, {p_time})')
-    if not _GB.handle:
-        return _UNCONNECTED
+    if not _GB.connected:
+        return _GB.language.UNCONNECTED
     _GB.handle.SetDigitalChannel(n_rele)
     _after(p_time, lambda: _end_pulse(n_rele))
     return _NO_ERROR
@@ -513,12 +553,12 @@ def _end_pulse(n_rele):
 def _slew_to(val):
     'Go to azimuth (in encoder units)'
     _GB.logger.info(f'Dome - _slew_to({val})')
-    if not _GB.handle:
-        return _UNCONNECTED
+    if not _GB.connected:
+        return _GB.language.UNCONNECTED
     with _GB.dome_lock:
         if _GB.isslave or _GB.movstat != IDLE:
-            _GB.logger.error(_CANT_EXECUTE)
-            return _CANT_EXECUTE
+            _GB.logger.error(ENGLISH.CANT_EXECUTE)
+            return _GB.language.CANT_EXECUTE
         _GB.targetaz = val
     return _NO_ERROR
 
@@ -1017,7 +1057,8 @@ def _run_alpaca(port):
 ##################################  API section  ############################
 
 ####################################################  Server management calls
-def start_server(ipport=0, logger=None, tel_sampler=None, sim_k8055=False):   #pylint: disable=R0915
+def start_server(ipport=0, logger=None, telsamp=None,   #pylint: disable=R0915,R0912,R0913
+                 sim_k8055=False, language='', debug=False):
     '''
     Launch dome control loop.
 
@@ -1030,38 +1071,55 @@ def start_server(ipport=0, logger=None, tel_sampler=None, sim_k8055=False):   #p
         The logger object it must provide two methods: logger.info(msg:str),
         logger.error(msg:str) used to record logging messages. (default: None)
 
-    tel_sampler : TelSampler
+    telsamp : TelSampler
         Object provided the telescope sampling capabilities (see info on top of this
         file)
 
     sim_k8055 : bool
         use simulation code for k8055 board controller (default: False)
 
+    language : str
+        language selector for error messages. Either 'EN' or 'IT'. Default: 'EN'
+
+    debug : bool
+        Enables debug messages
+
     Returns
     -------
     dct : DomeController object
     '''
-    _GB.logger =  logger if logger else _NoLogger()
+    _GB.debug = debug
+    if language.upper() == 'EN':
+        _GB.language = ENGLISH
+    elif language.upper() == 'IT':
+        _GB.language = ITALIAN
+    _GB.logger =  _Logger(logger)
     _GB.logger.info(f'Dome API - start_server(Vers.{__version__}, {__date__})')
     if _GB.server is not None:
-        _GB.logger.info('Dome server already running')
-        raise RuntimeError(_ALREADY_RUNNING)
-    if sim_k8055:
-        _GB.logger.info('Dome - using K8055 simulator')
-        _GB.handle = K8055Simulator()
-    _GB.handle.OpenDevice(K8055_PORT)
+        _GB.logger.info(ENGLISH.ALREADY_RUNNING)
+        raise RuntimeError(_GB.language.ALREADY_RUNNING)
     _GB.data_file = os.path.join(THIS_DIR, DOME_DATA_FILE)
     _GB.logger.info(f'Dome - getting data from: {_GB.data_file}')
-    _GB.tel_sampler = tel_sampler
-    if tel_sampler:
+    _GB.telsamp = telsamp
+    if telsamp:
         _GB.logger.info('Dome - tel. sampler is active')
     else:
-        _GB.logger.info('Dome - tel_sampler not available')
+        _GB.logger.info('Dome - tel. sampler not available')
     try:
         with open(_GB.data_file, encoding='utf8') as f_in:
             dome_data = json.load(f_in)
     except FileNotFoundError as exc:
-        raise RuntimeError(_NO_DOME_DATA) from exc
+        _GB.logger.error(_GB.language.NO_DOME_DATA)
+        raise RuntimeError(_GB.language.NO_DOME_DATA) from exc
+    if sim_k8055:
+        _GB.logger.info('Dome - using K8055 simulator')
+        _GB.handle = K8055Simulator()
+    try:
+        _GB.handle.OpenDevice(K8055_PORT)
+    except Exception as excp:
+        _GB.logger.error(ENGLISH.CANT_OPEN_DEVICE)
+        raise RuntimeError(_GB.language.CANT_OPEN_DEVICE) from excp
+
     _GB.domeaz = dome_data['domeaz']     # Dati calibrazione
     _GB.hoffset = dome_data['hoffset']   #
     _GB.maxerr = dome_data['maxerr']     #
@@ -1080,7 +1138,7 @@ def start_server(ipport=0, logger=None, tel_sampler=None, sim_k8055=False):   #p
     _GB.vmax = dome_data['vmax']         # fine dati calibrazione
 
     _GB.targetaz = -1
-    _GB.canslave = bool(tel_sampler)
+    _GB.canslave = bool(telsamp)
     if not _GB.canslave:
         _GB.telstat = _CANT_SLAVE
     _GB.saveaz = _GB.domeaz
@@ -1096,7 +1154,7 @@ def start_server(ipport=0, logger=None, tel_sampler=None, sim_k8055=False):   #p
             time.sleep(0.1)
             count -= 1
         if not _GB.server.is_alive():
-            raise RuntimeError(_DOME_THREAD_ERROR)
+            raise RuntimeError(_GB.language.DOME_THREAD_ERROR)
         _log_status()
 
     _GB.logger.info(f'Dome - thread {_GB.server.native_id} running')
@@ -1108,7 +1166,7 @@ def start_server(ipport=0, logger=None, tel_sampler=None, sim_k8055=False):   #p
         while not _GB.alpaca.is_alive():
             time.sleep(0.1)
         if not _GB.alpaca.is_alive():
-            raise RuntimeError(_ALPACA_THREAD_ERROR)
+            raise RuntimeError(_GB.language.ALPACA_THREAD_ERROR)
         _GB.logger.info(f'Alpaca - thread {_GB.alpaca.native_id} running')
     _GB.dctrl = DomeController()
     return _GB.dctrl
@@ -1119,7 +1177,7 @@ class DomeController:              #pylint: disable=R0904
     def stop_server():
         '''
         Stop dome control loop. To be called before application exit
-        (Note: after being stoppep the server cannot be started again)
+        (Note: after being stopped the server cannot be started again)
 
         Returns
         -------
@@ -1166,7 +1224,8 @@ class DomeController:              #pylint: disable=R0904
             with open(_GB.data_file, encoding='utf8') as f_in:
                 dome_data = json.load(f_in)
         except FileNotFoundError:
-            return _CANT_SAVE_STATUS
+            _GB.logger.error(ENGLISH.CANT_SAVE_STATUS)
+            return _GB.language.CANT_SAVE_STATUS
         dome_data['parkaz'] = _GB.parkaz
         dome_data['domeaz'] = _GB.domeaz
         with open(_GB.data_file, 'w', encoding='utf8') as f_out:
@@ -1203,7 +1262,7 @@ class DomeController:              #pylint: disable=R0904
             Error message. No error is an empty string
         '''
         with _GB.cmd_lock:
-            return 'find_home:' +_UNIMPLEMENTED
+            return 'find_home:' +_GB.language.UNIMPLEMENTED
 
     @staticmethod
     def get_ext_status():
@@ -1294,7 +1353,7 @@ class DomeController:              #pylint: disable=R0904
             ret['vmax'] = _GB.vmax
             try:
                 ret['logfile'] = _GB.logger.filename
-            except:
+            except:                                     # #pylint: disable=w0702
                 ret['logfile'] = ''
         return ret
 
@@ -1336,7 +1395,7 @@ class DomeController:              #pylint: disable=R0904
                 targetaz = _GB.targetaz
             _STAT.idletime = idtime
             _STAT.movstat = movstat
-            _STAT.connected = _GB.server is not None
+            _STAT.connected = (_GB.server is not None) and _GB.connected
             _STAT.domeaz = domeaz*_GB.todeg
             _STAT.targetaz = targetaz*_GB.todeg
             _STAT.isslave = _GB.isslave
@@ -1421,10 +1480,10 @@ class DomeController:              #pylint: disable=R0904
         '''
         _GB.logger.info('Dome API - park')
         with _GB.cmd_lock:
-            if not _GB.handle:
-                return _UNCONNECTED
+            if not _GB.connected:
+                return _GB.language.UNCONNECTED
             if _GB.parkaz is None:
-                return _UNCONFIGURED
+                return _GB.language.UNCONFIGURED
         return _slew_to(_GB.parkaz)
 
     @staticmethod
@@ -1441,8 +1500,8 @@ class DomeController:              #pylint: disable=R0904
         with _GB.cmd_lock:
             with _GB.dome_lock:
                 if _GB.movstat != IDLE or _GB.isslave:
-                    _GB.logger.error(_CANT_EXECUTE)
-                    return _CANT_EXECUTE
+                    _GB.logger.error(ENGLISH.CANT_EXECUTE)
+                    return _GB.language.CANT_EXECUTE
                 _GB.parkaz = _GB.domeaz
         return _NO_ERROR
 
@@ -1458,17 +1517,17 @@ class DomeController:              #pylint: disable=R0904
         '''
         _GB.logger.info('Dome API - set_slave()')
         with _GB.cmd_lock:
-            if not _GB.handle:
-                return _UNCONNECTED
+            if not _GB.connected:
+                return _GB.language.UNCONNECTED
             if not _GB.canslave:
-                _GB.logger.error(_CANT_EXECUTE)
-                return _CANT_EXECUTE
+                _GB.logger.error(ENGLISH.CANT_EXECUTE)
+                return _GB.language.CANT_EXECUTE
             if _GB.isslave:
                 return _NO_ERROR
             with _GB.dome_lock:
                 if _GB.movstat != IDLE:
-                    _GB.logger.error(_CANT_EXECUTE)
-                    return _CANT_EXECUTE
+                    _GB.logger.error(ENGLISH.CANT_EXECUTE)
+                    return _GB.language.CANT_EXECUTE
                 _GB.isslave = True
             return _NO_ERROR
         return _NO_ERROR
@@ -1493,7 +1552,7 @@ class DomeController:              #pylint: disable=R0904
             try:
                 return _slew_to(_to_encoder(float(azh)))
             except ValueError:
-                return _VALUE_ERROR
+                return _GB.language.VALUE_ERROR
 
     @staticmethod
     def start_left():
@@ -1542,7 +1601,7 @@ class DomeController:              #pylint: disable=R0904
         '''
         _GB.logger.info(f'Dome API - step_left({tstep})')
         if tstep <= 0:
-            return _VALUE_ERROR
+            return _GB.language.VALUE_ERROR
         with _GB.cmd_lock:
             with _GB.dome_lock:
                 return _start_lk(LEFT_MOVE, tstep)
@@ -1564,7 +1623,7 @@ class DomeController:              #pylint: disable=R0904
         '''
         _GB.logger.info(f'Dome API - step_right({tstep})')
         if tstep <= 0:
-            return _VALUE_ERROR
+            return _GB.language.VALUE_ERROR
         with _GB.cmd_lock:
             with _GB.dome_lock:
                 return _start_lk(RIGHT_MOVE, tstep)
@@ -1581,8 +1640,8 @@ class DomeController:              #pylint: disable=R0904
         '''
         _GB.logger.info('Dome API - stop()')
         with _GB.cmd_lock:
-            if not _GB.handle:
-                return _UNCONNECTED
+            if not _GB.connected:
+                return _GB.language.UNCONNECTED
             with _GB.dome_lock:
                 _GB.isslave = False
                 if _GB.movstat == IDLE:
@@ -1611,12 +1670,12 @@ class DomeController:              #pylint: disable=R0904
         '''
         _GB.logger.info(f'Dome API - switch({n_rele}, {enable})')
         with _GB.cmd_lock:
-            if not _GB.handle:
-                return _UNCONNECTED
+            if not _GB.connected:
+                return _GB.language.UNCONNECTED
             try:
                 n_rele = int(n_rele)
             except ValueError:
-                return _VALUE_ERROR
+                return _GB.language.VALUE_ERROR
             if 0 <= n_rele <= 3:
                 if enable:
                     _GB.handle.SetDigitalChannel(AUX_RELE_1+n_rele)
@@ -1625,7 +1684,7 @@ class DomeController:              #pylint: disable=R0904
                     _GB.handle.ClearDigitalChannel(AUX_RELE_1+n_rele)
                     _GB.switch_stat[n_rele] = 0
                 return _NO_ERROR
-        return _VALUE_ERROR
+        return _GB.language.VALUE_ERROR
 
     @staticmethod
     def sync_to_azimuth(azh):
@@ -1646,14 +1705,14 @@ class DomeController:              #pylint: disable=R0904
         try:
             domeaz = _to_encoder(float(azh))
         except ValueError:
-            return _VALUE_ERROR
+            return _GB.language.VALUE_ERROR
         with _GB.cmd_lock:
-            if not _GB.handle:
-                return _UNCONNECTED
+            if not _GB.connected:
+                return _GB.language.UNCONNECTED
             with _GB.dome_lock:
                 if _GB.movstat != IDLE:
-                    _GB.logger.error(_CANT_EXECUTE)
-                    return _CANT_EXECUTE
+                    _GB.logger.error(ENGLISH.CANT_EXECUTE)
+                    return _GB.language.CANT_EXECUTE
                 _GB.domeaz = domeaz
         return _NO_ERROR
 
@@ -1849,6 +1908,7 @@ def _test():                     #pylint: disable=R0912,R0915,R0914
     ksimul = '-k' in sys.argv
     debug = '-d' in sys.argv
     telsim = '-s' in sys.argv
+    lang = 'it' if '-i' in sys.argv else 'en'
     alport = _ALP_TEST_PORT if '-a' in sys.argv else 0
     print()
     print('Test program')
@@ -1858,16 +1918,18 @@ def _test():                     #pylint: disable=R0912,R0915,R0914
     else:
         print('** slave mode unavailable **')
     print()
-    logger = _Logger(debug)
     if TEL_SAMPLER:
-        tls = ts.tel_start(logger, telsim)
+        tls = ts.tel_start(None, telsim, debug)
     else:
         tls = None
     try:
-        dct = start_server(ipport=alport, logger=logger, tel_sampler=tls, sim_k8055=ksimul)
+        dct = start_server(ipport=alport, logger=None, telsamp=tls,
+                           sim_k8055=ksimul, language=lang, debug=debug)
     except Exception as excp:        #pylint: disable=W0703
-        print(excp)
-        tls.tel_stop()
+        _debug(f'Exception from start_server: {excp}')
+        if tls:
+            tls.tel_stop()
+            _debug('Tel sampler exited')
         sys.exit()
     print()
     print(dct.get_info())

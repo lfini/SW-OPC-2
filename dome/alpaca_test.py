@@ -32,6 +32,7 @@ dome = ad.Dome(f'{IP_ADDR}:{PORT}', DEV_NUM)
 switch = sw.Switch(f'{IP_ADDR}:{PORT}', DEV_NUM)
 
 def waitstop():
+    'attesa stato stop'
     print('Waiting stop', end=' ', flush=True)
     azh = dome.Azimuth
     oks = 3
@@ -113,7 +114,7 @@ print(' - Slaved:', dome.Slaved)
 print('SlewToAzimuth(10) - previsto errore')
 try:
     dome.SlewToAzimuth(10)
-except Exception as exc:
+except Exception as exc:      #pylint: disable=W0703
     print('Errore:', exc)
 waitstop()
 print('Slaved = False')
