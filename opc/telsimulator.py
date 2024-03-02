@@ -30,8 +30,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from opc import astro        # pylint: disable=C0413
 
-__version__ = "1.4"
-__date__ = "Ottobre 2022"
+__version__ = "1.5"
+__date__ = "Marzo 2024"
 __author__ = "Luca Fini"
 
 LINEAR = 0
@@ -330,7 +330,7 @@ class Telescope(Thread):
 def get_date():
     "Leggi data locale"
     ltime = time.localtime()
-    return f"{ltime[2]:d}:{ltime[1]:02d}:{ltime[0]:02d}"
+    return f"{ltime[1]:02d}:{ltime[2]:02d}:{(ltime[0]-2000):02d}"
 
 def get_ltime():
     "Leggi local time"
@@ -479,10 +479,11 @@ class LX200(Telescope):         # pylint: disable=R0904,R0902
                     ret = "1"
                 else:
                     ret = "0"
-            elif command[:3] == b":Sg": # Comando SgDDD*MM - Set Longitude
-                ddd, mmm = (int(command[3:7]), int(command[8:10]))
-                if _inrange(ddd, 360) and _inrange(mmm, 60):
-                    self.longitude = ddd+mmm/60.
+            elif command[:3] == b":Sg": # Comando SgsDDD*MM - Set Longitude
+                sgn, ddd, mmm = (command[3], int(command[4:7]), int(command[8:10]))
+                if _inrange(ddd, 180) and _inrange(mmm, 60):
+                    mult = 1 if sgn == ord(b"+") else -1
+                    self.longitude = mult*(ddd+mmm/60.)
                     ret = "1"
                 else:
                     ret = "0"
@@ -632,7 +633,7 @@ class LX200(Telescope):         # pylint: disable=R0904,R0902
                         client.sendall(ret)
                         client.shutdown(socket.SHUT_RDWR)
                         client.close()
-                    except Exception as excp:
+                    except Exception as excp:     # pylint: disable=W0703
                         print("Errore risposta al cliente:", str(excp))
                     if GLOB.verbose:
                         print("-", ret.decode("ascii"), flush=True)
