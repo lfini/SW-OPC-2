@@ -24,15 +24,17 @@ import sys
 #__version__ = "1.03"   # Aggiunto invio file di log a www.lfini.cloud (da logger e dtracker)
 
 __version__ = "2.0"   # Modificato tutto per unica applicazione di gestione osservazione
+__date__ = "Gennaio 2024"
+__author__ = 'Luca Fini'
 
-__date__ = "Ottobre 2022"
-
-def get_version():
+def get_version(long=False):
     "recupera versione, come stringa"
+    if long:
+        return f"{__version__} - {__author__}, {__date__}"
     return __version__
 
 if __name__ == "__main__":
     if "-f" in sys.argv:
-        print(f"Vers. {__version__} - {__date__}")
+        print(get_version(long=True))
     else:
-        print(__version__)
+        print(get_version())

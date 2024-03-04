@@ -1,11 +1,16 @@
 """
-opclogger.py - Procedure di supporto alle osservazioni ad OPC
+opclogger.py - Vers. {}
+
+Procedure di supporto alle osservazioni ad OPC
 
 Uso per test:
-    python opclogger.py [-s]
+
+    python opclogger.py [-h] [-1] [-2]
 
 Dove:
-    -s   Usa simulatore telescopio
+    -h   mostra pagina di aiuto
+    -1   Lancia pannello iniziale (default)
+    -2   Lancia pannello secondario
 """
 
 import sys
@@ -19,13 +24,14 @@ import tkinter.scrolledtext as scr
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+#pylint: disable=C0413
 import opc.constants as const
-from opc.utils import get_config
-import opc.widgets as wg
-from opc import tel_sampler as ts
+from opc import utils
+from opc import configure as cfg
+import widgets as wg
 
 __version__ = "2.0"
-__date__ = "Marzo 2023"
+__date__ = "Dicembre 2023"
 __author__ = "Luca Fini"
 
 MAIN_CHECK_PERIOD = 500     # Intervallo loop di check (ms)
@@ -113,16 +119,21 @@ RED_LL = "#ffcccc"
 WHITE = "#ffffff"
 YELLOW = "#eeffff"
 
-class _GB:
+BG_MENU = '#a6a6a6'
+
+class _GB:                #pylint: disable=R0903
     'global status'
     debug = False
     do_stop = False
-    stopped = False
 
 def _debug(*args):
     "Funzione scrittura debug"
     if _GB.debug:
         print("DBG>", *args)
+
+def version():
+    'riporta versione'
+    return f'{__version__}. {__author__}, {__date__}'
 
 def safename(filename):
     "Verfica che filename sia una stringa valida come nome di file"
@@ -134,7 +145,7 @@ def safename(filename):
 SEPARATOR1 = " -- "
 SEPARATOR2 = "---------"
 
-DEV_NULL = open(os.devnull, "w")
+DEV_NULL = open(os.devnull, "w", encoding='utf8')  #pylint: disable=R1732
 
 def _time():
     return time.strftime("%Y-%m-%d %H:%M:%S")
@@ -146,9 +157,10 @@ def start_process(path, with_python=False):
     else:
         cmd = [path]
     try:
-        proc = subp.Popen(cmd, stdout=DEV_NULL, stderr=DEV_NULL, start_new_session=True)
-    except Exception as excp:                           # pylint: disable=W0703
-        msg = "Errore %s: %s"%(path, str(excp))
+        proc = subp.Popen(cmd, stdout=DEV_NULL,           #pylint: disable=R1732
+                stderr=DEV_NULL, start_new_session=True)
+    except Exception as excp:                             #pylint: disable=W0703
+        msg = f"Errore {path}, {str(excp)}"
         _debug(msg)
         return None
     _debug("Lanciato:", path)
@@ -158,10 +170,17 @@ def check_process(proc_obj):
     "Verifica se il processo è ancora attivo"
     return proc_obj.poll() is None
 
+def mod_config(master):
+    "Apre pannello per modifica configurazione"
+    tplvl = wg.MyToplevel(master, position=(50, 50))
+    tplvl.title("Configurazione DTracker")
+    wdg = cfg.MakeConfig(tplvl)
+    wdg.pack()
+
 class _Logger:
     "Supporto per archiviazione logs"
     def __init__(self, logfilepath, o_widget=None):
-        self.logfd = open(logfilepath, "a")
+        self.logfd = open(logfilepath, "a", encoding='utf8')    #pylint: disable=R1732
         self.o_widget=o_widget
 
     def logblob(self, timestamp, title, blob=None):
@@ -214,22 +233,12 @@ def get_info(datadir):
     infopath = os.path.join(datadir, const.INFO_FILE)
     _debug("lettura stato da:", infopath)
     try:
-        with open(infopath) as f_in:
+        with open(infopath, encoding='utf8') as f_in:
             info = json.load(f_in)
     except FileNotFoundError:
         return {}
     _debug('stato recuperato: '+str(info))
     return info
-
-def dome_snap():
-    "Interrogazione stato cupola"
-    lines = []
-    if GLOB.dome.Connected:
-        lines.append("Dome Azimuth: "+str(GLOB.dome.Azimuth))
-        lines.append("Dome status: "+("SLEWING" if GLOB.dome.Slewing else "IDLE"))
-        lines.append("Telescope DEC: "+str(GLOB.telc.get_current_deh(as_string=True)))
-        lines.append("Telescope HA: "+str(GLOB.telc.get_current_ha(as_string=True)))
-    return lines
 
 OBBLIGATORI = "Nota: i campi indicati con (*) sono obbligatori"
 NO_TEL_INFO = "Interrogazione telescopio fallita"
@@ -237,10 +246,26 @@ NO_DOME_INFO = "Interrogazione cupola fallita"
 
 class ObsInit(tk.Frame):                        # pylint: disable=R0901,R0902
     "Pannello per informazioni iniziali per osservazione"
-    def __init__(self, master, config):
+    def __init__(self, master, config):             #pylint: disable=R0915
         super().__init__(master, padx=8, pady=8, bg=GRAY_D)
+        menu_fr = tk.Frame(self, pady=0, bg=BG_MENU)
+        confb = tk.Menubutton(menu_fr, text="File", bg=BG_MENU)
+        confb.pack(side=tk.LEFT)
+        tk.Label(menu_fr, text="  ", bg=BG_MENU).pack(side=tk.LEFT)
+        filemenu = tk.Menu(confb, tearoff=0, bg=BG_MENU)
+        filemenu.add_command(label="Modifica configurazione",
+                             command=lambda x=master: mod_config(x))
+        filemenu.add_command(label="Esci", command=self.destroy)
+        confb.config(menu=filemenu)
+        aiuto = tk.Menubutton(menu_fr, text="Aiuto", bg=BG_MENU) #, relief=RAISED)
+        aiuto.pack(side=tk.LEFT)
+        helpmenu = tk.Menu(aiuto, tearoff=0)
+        helpmenu.add_command(label="Introduzione", command=lambda: self.help("intro"))
+        aiuto.config(menu=helpmenu)
+        menu_fr.pack(anchor=tk.W, expand=1, fill=tk.X)
+
         self.config = config
-        self.frame = tk.Frame(self, bg=GRAY_D)
+        self.frame = tk.Frame(self, bg=GRAY_D, pady=4)
         self.frame.pack()
         tk.Label(self.frame, text="Impostazioni iniziali", fg=YELLOW, bg=GRAY_D,
                  font=('Helvetica', 16, 'bold')).grid(row=0, column=0, columnspan=3)
@@ -300,6 +325,10 @@ class ObsInit(tk.Frame):                        # pylint: disable=R0901,R0902
         self.timestamp = None
         self.datadir = None
         self.valid = False
+
+    def help(self, what):
+        'mostra finestra di aiuto'
+        wg.Message(self, '???', title="uso", position=(30, 30))
 
     def set_ident(self):
         "Accetta identificatore"
@@ -377,19 +406,19 @@ class ObsInit(tk.Frame):                        # pylint: disable=R0901,R0902
                     "personale": opc_pers,
                     "inizio": self.timestamp,
                     "nota": notes}
-            with open(os.path.join(self.datadir, const.INFO_FILE), "w") as f_out:
+            with open(os.path.join(self.datadir, const.INFO_FILE), "w", encoding='utf8') as f_out:
                 json.dump(info, f_out)
                 _debug('Creato file:', f_out.name)
         self.valid = True
         _debug('primo passo termina correttamente')
         self.destroy()
 
-
 class ButtonPanel(tk.Frame):                             # pylint: disable=R0901
     "bottoniera per logs"
-    def __init__(self, master, tel_sampler):
+    def __init__(self, master, dct, tls):
         super().__init__(master, bg=GRAY_D, pady=5)
-        self.tel_sampler = tel_sampler
+        self.tls = tls
+        self.dct = dct
         btframe = tk.Frame(self, bg=GRAY_D)
         tk.Button(btframe, text="NUOVO\nOGGETTO", padx=5, pady=5, font=BT_FONT,
                   width=11, command=self.az_nuovo).grid(row=1, column=1)
@@ -403,89 +432,58 @@ class ButtonPanel(tk.Frame):                             # pylint: disable=R0901
                   activebackground=RED_LL, width=11, command=self.az_anomdome).grid(row=1, column=5)
         tk.Button(btframe, text="ANOMALIA\nCAMERA", padx=5, pady=5, bg=RED_L, font=BT_FONT,
                   activebackground=RED_LL, width=11, command=self.az_anomcam).grid(row=1, column=6)
-#       self.b_dtracker = tk.Button(btframe, text="LANCIA\nDTRACKER", padx=5, pady=5,
-#                                   bg=GREEN_L, font=BT_FONT, activebackground=GREEN_LL,
-#                                   width=11, command=self.start_dtracker)
-#       self.b_dtracker.grid(row=2, column=1)
-#       self.p_dtracker = None
-#       self.b_homer = tk.Button(btframe, text="LANCIA\nHOMER", padx=5, pady=5,
-#                                bg=GREEN_L, font=BT_FONT, activebackground=GREEN_LL,
-#                                width=11, command=self.start_homer)
-#       self.b_homer.grid(row=2, column=2)
-#       self.p_homer = None
-#       tk.Frame(btframe, bg=GREEN_L, border=2,
-#                relief=tk.RIDGE).grid(row=2, column=3, sticky=tk.E+tk.W+tk.N+tk.S)
-#       tk.Frame(btframe, bg=GREEN_L, border=2,
-#                relief=tk.RIDGE).grid(row=2, column=4, sticky=tk.E+tk.W+tk.N+tk.S)
-#       tk.Frame(btframe, bg=GREEN_L, border=2,
-#                relief=tk.RIDGE).grid(row=2, column=5, sticky=tk.E+tk.W+tk.N+tk.S)
-#       tk.Frame(btframe, bg=GREEN_L, border=2,
-#                relief=tk.RIDGE).grid(row=2, column=6, sticky=tk.E+tk.W+tk.N+tk.S)
         btframe.pack()
         self.setinfo = master.setinfo
-#       self.maincheck()
 
-#   def maincheck(self):
-#       "Loop di verifica stato"
-#       if _GB.do_stop:
-#           _debug("ButtonPanel: ricevuto stop")
-#           _GB.stopped = True
-#           return
-#       if self.p_dtracker is not None:
-#           if not check_process(self.p_dtracker):
-#               msg = "DTracker terminato"
-#               _debug(msg)
-#               text = _GB.logger.logblob(_time(), msg)
-#               self.setinfo(msg)
-#               self.p_dtracker = None
-#               self.b_dtracker.config(state=tk.NORMAL)
-#       if self.p_homer is not None:
-#           if not check_process(self.p_homer):
-#               msg = "Homer terminato"
-#               _debug(msg)
-#               text = _GB.logger.logblob(_time(), msg)
-#               self.setinfo(msg)
-#               self.p_homer = None
-#               self.b_homer.config(state=tk.NORMAL)
-#       self.after(MAIN_CHECK_PERIOD, self.maincheck)
-
-    def tel_snap():
+    def tel_snap(self):
         "Snapshot stato telescopio TBD"
         lines = []
-        ret = self.tel_sampler.get_status()
+        ret = self.tls.get_status()
         if ret is None:
             return []
         lines.append("Global status: "+str(ret))
-        ret = GLOB.telc.get_current_deh(as_string=True)
+        ret = self.tls.get_current_deh(as_string=True)
         lines.append("Current DE: "+str(ret))
-        ret = GLOB.telc.get_current_rah(as_string=True)
+        ret = self.tls.get_current_rah(as_string=True)
         lines.append("Current RA: "+str(ret))
-        ret = GLOB.telc.get_tsid(as_string=True)
+        ret = self.tls.get_tsid(as_string=True)
         lines.append("Sidereal time: "+str(ret))
-        ret = GLOB.telc.get_target_deh(as_string=True)
+        ret = self.tls.get_target_deh(as_string=True)
         lines.append("Target DE: "+str(ret))
-        ret = GLOB.telc.get_target_rah(as_string=True)
+        ret = self.tls.get_target_rah(as_string=True)
         lines.append("Target RA: "+str(ret))
-        mvstat = GLOB.telc.get_db()
+        mvstat = self.tls.get_db()
         if mvstat is None:
             mvstat = "None"
         else:
             mvstat = "YES" if mvstat == 0x7f else "NO"
         lines.append("Tel. moving: "+mvstat)
-        ret = GLOB.telc.get_trate()
+        ret = self.tls.get_trate()
         lines.append("Tracking freq: "+str(ret))
-        ret = GLOB.telc.get_pside()
+        ret = self.tls.get_pside()
         lines.append("Pier side: "+str(ret))
-        ret = GLOB.telc.get_olim()
+        ret = self.tls.get_olim()
         lines.append("Max. altitude: "+str(ret))
-        ret = GLOB.telc.get_hlim()
+        ret = self.tls.get_hlim()
         lines.append("Min. altitude: "+str(ret))
-        firmw = (str(x) for x in GLOB.telc.get_firmware())
+        firmw = (str(x) for x in self.tls.get_firmware())
         lines.append("OnStep vers.: "+" ".join(firmw))
-        ret = GLOB.telc.get_onstep_value("U1")
+        ret = self.tls.get_onstep_value("U1")
         lines.append("Motor 1 status: "+str(ret))
-        ret = GLOB.telc.get_onstep_value("U2")
+        ret = self.tls.get_onstep_value("U2")
         lines.append("Motor 2 status: "+str(ret))
+        return lines
+
+    def dome_snap(self):
+        "Interrogazione stato cupola"
+        lines = []
+        if self.dct.Connected:
+            lines.append("Dome Azimuth: "+str(self.dct.Azimuth))
+            lines.append("Dome status: "+("SLEWING" if self.dct.Slewing else "IDLE"))
+            lines.append("Telescope DEC: "+str(self.tls.get_current_deh(as_string=True)))
+            lines.append("Telescope HA: "+str(self.tls.get_current_ha(as_string=True)))
+        else:
+            lines.append("Dome is not connected")
         return lines
 
     def az_nuovo(self):
@@ -495,7 +493,7 @@ class ButtonPanel(tk.Frame):                             # pylint: disable=R0901
         self.wait_window(ret)
         if ret.content:
             title = "Osservazione: "+ret.content["brief"]
-            text = _GB.logger.logblob(ret.timestamp, title, ret.content["long"])
+            _GB.logger.logblob(ret.timestamp, title, ret.content["long"])
 
     def az_nota(self):
         "Azione per bottone nota generica"
@@ -504,7 +502,7 @@ class ButtonPanel(tk.Frame):                             # pylint: disable=R0901
         self.wait_window(ret)
         if ret.content:
             title = "Nota: "+ret.content["brief"]
-            text = _GB.logger.logblob(ret.timestamp, title, ret.content["long"])
+            _GB.logger.logblob(ret.timestamp, title, ret.content["long"])
 
     def az_strum(self):
         "Azione per bottone scegli strumenti"
@@ -523,30 +521,30 @@ class ButtonPanel(tk.Frame):                             # pylint: disable=R0901
         self.wait_window(ret)
         if ret.content:
             title = "ANOMALIA TELESCOPIO: "+ret.content["brief"]
-            text = _GB.logger.logblob(tmst, title, ret.content["long"])
+            _GB.logger.logblob(tmst, title, ret.content["long"])
             title = "DUMP STATO ONSTEP"
             if tel_stat:
-                text = _GB.logger.logblob(tmst, title, tel_stat)
+                _GB.logger.logblob(tmst, title, tel_stat)
             else:
-                text = _GB.logger.logblob(tmst, title, [NO_TEL_INFO])
+                _GB.logger.logblob(tmst, title, [NO_TEL_INFO])
 
     def az_anomdome(self):
         "Azione per bottone anomalia cupola"
         self.setinfo()
         tmst = _time()
-        dome_stat = dome_snap()
+        dome_stat = self.dome_snap()
         if not dome_stat:
             self.setinfo(NO_DOME_INFO)
         ret = AnomDome(self)
         self.wait_window(ret)
         if ret.content:
             title = "ANOMALIA CUPOLA: "+ret.content["brief"]
-            text = _GB.logger.logblob(tmst, title, ret.content["long"])
+            _GB.logger.logblob(tmst, title, ret.content["long"])
             title = "DUMP STATO CUPOLA"
             if dome_stat:
-                text = _GB.logger.logblob(tmst, title, dome_stat)
+                _GB.logger.logblob(tmst, title, dome_stat)
             else:
-                text = _GB.logger.logblob(tmst, title, [NO_DOME_INFO])
+                _GB.logger.logblob(tmst, title, [NO_DOME_INFO])
 
     def az_anomcam(self):
         "Azione per bottone anomalia camera"
@@ -599,12 +597,12 @@ class ItemCard(tk.Toplevel):
         "Callback pulsante OK"
         brief = self.e_nome.get().strip()
         if not brief:
-            wg.WarningMsg(GLOB.root, NO_DESCR)
+            wg.WarningMsg(self, NO_DESCR)
             return
         if self.options:
             msg = self.options.check_me()
             if msg:
-                wg.WarningMsg(GLOB.root, msg)
+                wg.WarningMsg(self, msg)
                 return
         self.content = {"brief": brief}
         text = ""
@@ -672,10 +670,10 @@ class DomeOptions(tk.Frame):         # pylint: disable=R0913, R0901
         "Riporta versione testuale dello stato"
         v_moto = self.v_moto.get()
         v_posiz = self.v_posiz.get()
-        text = self.olabel+" [Movim. manuale possibile: %s;  Posiz. corretta: %s"% \
-               (sino(v_moto), sino(v_posiz))
+        text = self.olabel+ \
+               f" [Movim. manuale possibile: {sino(v_moto)};  Posiz. corretta: {sino(v_posiz)}]"
         if not v_posiz:
-            text += "; Stima posiz.: %d"%self.stima
+            text += f"; Stima posiz.: {self.stima}"
         text += "]"
         return text
 
@@ -688,34 +686,28 @@ class AnomDome(ItemCard):
 
 class OpcLogger(tk.Frame):                            # pylint: disable=R0901
     "Pannello per la generazione di logs"
-    def __init__(self, master, datadir, tel_sampler, **kwargs):
+    def __init__(self, master, datadir, dct, tls, **kwargs):
         super().__init__(master, **kwargs)
         self.datadir = datadir
-        self.tls = tel_sampler
-        ButtonPanel(self, tel_sampler).pack(expand=1, fill=tk.X)
+        self.tls = tls
+        self.dct = dct
+        ButtonPanel(self, dct, tls).pack(expand=1, fill=tk.X, anchor=tk.N)
         self.statline = tk.Label(self, bg=BLUE_D, fg=WHITE, border=2, relief=tk.RIDGE)
-        self.statline.pack(expand=1, fill=tk.X)
-        self.ttt = scr.ScrolledText(self, width=100, height=30, bg=GRAY_DD, fg=WHITE)
-        logfile = os.path.join(datadir, const.LOG_FILE)
+        self.statline.pack(expand=1, fill=tk.X, anchor=tk.N)
+        self.ttt = scr.ScrolledText(self, width=100, height=40, bg=GRAY_DD, fg=WHITE)
+        logfile = os.path.join(self.datadir, const.LOG_FILE)
         try:
-            with open(logfile) as f_in:
+            with open(logfile, encoding='utf8') as f_in:
                 for line in f_in:
                     self.ttt.insert(tk.END, line)
         except FileNotFoundError:
             pass
-        self.ttt.pack()
+        self.ttt.pack(anchor=tk.N, expand=1, fill=tk.BOTH)
         self.ttt.see(tk.END)
-        _GB.logger = _Logger(os.path.join(datadir, const.LOG_FILE), self)
-#       self.after(100, self.check_term)
+        tk.Frame(self, bg=GRAY_DD).pack(expand=1, fill=tk.BOTH)
+        _GB.logger = _Logger(os.path.join(self.datadir, const.LOG_FILE), self)
         _debug("OpcLogger attivo")
-
-#   def check_term(self):
-#       "Verifica richiesta termine"
-#       if _GB.stopped:
-#           _debug("Termina OpcLogger")
-#           _termina()
-#           return
-#       self.after(100, self.check_term)
+        self.running = True
 
     def setinfo(self, line=""):
         "Scrive informazione sulla linea di stato"
@@ -727,30 +719,31 @@ class OpcLogger(tk.Frame):                            # pylint: disable=R0901
             self.ttt.insert(tk.END, text)
         self.ttt.see(tk.END)
 
-def main():
-    "Programma per test"
+    def stop(self):
+        'Gestione terminazione'
+        _debug('Ricevuto stop')
+        self.running = False
 
-    _GB.debug = True
-    sim_tel = "-s" in sys.argv
-    config = get_config(sim_tel)
-
+def about():
+    'Help on line'
     root = tk.Tk()
-    root.configure(bg=GRAY_D)
-    root.title("Test OpcLogger")
-    starter = ObsInit(root, config)
-#   GLOB.root.protocol("WM_DELETE_WINDOW", _stop_all)
-    starter.grid()
-    wg.set_position(root, (0.01, 0.01))
-    root.wait_window(starter)
-    _debug('fine primo passo')
-    if starter.valid:
-        tls = ts.tel_start(logger=None, simul=sim_tel)
-        app = OpcLogger(root, starter.datadir, tls)
-        app.grid()
-        root.mainloop()
-        sys.exit()
-    _debug('secondo passo non eseguibile')
+    wdg = wg.MessageText(root, __doc__.format(version()))
+    wdg.pack()
+    root.mainloop()
 
+def main():
+    'codice di test'
+    if '-h' in sys.argv:
+        about()
+        sys.exit()
+    root = tk.Tk()
+    config = utils.get_config()
+    if '-2' in sys.argv:
+        wdg = OpcLogger(root, '.', None, None)
+    else:
+        wdg = ObsInit(root, config)
+    wdg.pack()
+    root.mainloop()
 
 if __name__ == "__main__":
     main()

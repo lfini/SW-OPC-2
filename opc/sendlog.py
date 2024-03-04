@@ -1,6 +1,16 @@
 """
 Invio file di log a server aruba
 
+
+Uso per test:
+
+    python sendlog.py  [-t]
+
+Dove:
+    -t  Richiedi elenco tokens e associate directory
+
+    Lanciato senza argomenti esegue un generico test
+
 """
 
 # pylint: disable = W0703

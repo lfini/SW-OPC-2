@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 '''
-OPC - GUI per controllo cupola - [%s]
+OPC - GUI per controllo cupola - [Vers. {}]
 
 Uso per test:
         python dtracker.py [-d] [-h] [-k] [-s] [-v]
@@ -9,7 +9,7 @@ Dove:
        -d  Attiva debug locale GUI
        -D  Attiva debug controller cupola
        -h  Mostra questa pagina ed esce
-       -k  Usa simulatore di scheeda k8055
+       -k  Usa simulatore di scheda k8055
        -m  Attiva GUI minima
        -p  Alpaca port
        -s  Usa simulatore di telescopio
@@ -28,11 +28,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 # pylint: disable=C0413
 from opc import utils
-import opc.widgets as wg
-
 from opc import dome_ctrl as dc
-
-from opc import tel_sampler as ts
+from opc import telsamp as ts
+import widgets as wg
 
 __author__ = 'Luca Fini'
 __version__ = '2.2'
@@ -78,7 +76,6 @@ B_FONT = wg.H4_FONT
 
 class _GB:           # pylint: disable=R0903
     'globals senza usare global'
-    config = {}
     debug = False
     logname = ''
 
@@ -94,7 +91,7 @@ DTRACKER_INFO = '''
 def _debug(*par):
     'Scrivi linea dui debug'
     if _GB.debug:
-        print('DBG>', *par)
+        print('DTR DBG>', *par)
 
 class MyFrame(tk.Frame):                      #pylint: disable=R0901
     'versione colorabile di Frame'
@@ -242,12 +239,15 @@ class FocusButtons(MyFrame):                    # pylint: disable=R0901
         self.onrele1 = False
         self.imgood = True
 
-class SetupPanel(wg.MyToplevel):
+class SetupPanel(tk.Frame):
     'Pannello per impostazioni'
-    def __init__(self, parent, dct, sav_cback, err_cback):
-        super().__init__(parent, 'Impostazioni', position='c', bg=BACKGROUND, padx=5, pady=5)
+    def __init__(self, parent, config, dct, sav_cback, err_cback):     #pylint: disable=R0913
+        super().__init__(parent, bg=BACKGROUND, padx=5, pady=5)
+        self.config = config
         self.dct = dct
         self.azh = self.dct.get_status().domeaz
+        MyLabel(self, text='Impostazioni:',
+                font=wg.H2_FONT, pady=15).grid(row=0, column=1, sticky='w')
         MyLabel(self, text='Posizione corrente: ',
                 font=wg.H4_FONT).grid(row=1, column=1, sticky='e')
         MyNumber(self, fmt='%.1f', width=8, value=self.azh).grid(row=1, column=2)
@@ -256,7 +256,8 @@ class SetupPanel(wg.MyToplevel):
         sync_b.grid(row=2, column=2)
         self.sync_e = MyEntry(self, width=5)
         self.sync_e.grid(row=2, column=3)
-        MyLabel(self, text='Imposta posizione park: ').grid(row=3, column=1, sticky='e')
+        MyLabel(self,
+                text='Imposta posizione corrente come park: ').grid(row=3, column=1, sticky='e')
         sync_b = MyButton(self, text='Set park', command=self.set_park)
         sync_b.grid(row=3, column=2)
         MyLabel(self, text='Salva posizione corrente: ').grid(row=4, column=1, sticky='e')
@@ -268,227 +269,47 @@ class SetupPanel(wg.MyToplevel):
     def sync(self):
         'Sincronizza posizione cupola'
         sval = self.sync_e.get().strip()
+        _debug(f'Sync dome at: {sval}')
         ret = self.dct.sync_to_azimuth(sval)
         self.err_cback(ret)
 
     def save_pos(self):
         'salva posizione corrente'
-        _GB.config['save_position'] = self.azh
+        self.config['save_position'] = self.azh
+        _debug(f'Save position: {self.azh}')
         self.sav_cback()
 
     def set_park(self):
         'imposta posizione corrente come park'
         ret = self.dct.set_park()
+        _debug('Set park')
         self.err_cback(ret)
 
-class DTracker(MyFrame):                           # pylint: disable=R0901,R0902,R0904
-    'Widget per asservimento cupola'
-    def __init__(self, parent, dct, tls):          # pylint: disable=R0915,R0914
+class _DTrackerBase(MyFrame):          # pylint: disable=R0901,R0902
+    'Classe comune alle due versioni di GUI'
+    VIRT_UNIMPL = 'Virtual method not implemented'
+    def __init__(self, parent, dct):
         super().__init__(parent)
-        self.tel_sampler = tls
         self.dct = dct
-                                                      # Bottoni con icone
-        gear = tk.Button(self, image=wg.get_icon('gear', 24, 'brown'),
-                        bg=BACKGROUND, command=self.setup)
-        gear.grid(row=1, column=0,sticky='nw')
-        wg.ToolTip(gear, text='Impostazioni')
-        bfr = tk.Frame(self)
-        tk.Label(bfr, text='  ', fg=BACKGROUND,
-                 bg=BACKGROUND).pack(side=tk.LEFT, expand=1, fill=tk.BOTH)
-        info = tk.Button(bfr, image=wg.get_icon('info', 24, 'cyan'),
-                        bg=BACKGROUND, command=self.info)
-        info.pack(side=tk.LEFT)
-        wg.ToolTip(info, text='Informazioni')
-        bfr.grid(row=1, column=1,sticky='nw')
-
+        wrapper = tk.Frame(self)
+        self.main = MyFrame(wrapper, padx=5, pady=8)
+        self.main.pack()
         MyFrame(self, border=4,                      # linea di separazione
-                relief=tk.SUNKEN).grid(row=2, column=0,
-                                       columnspan=5, sticky='we', ipady=1)
-                                                      # area sinistra cupola
-        self.dome_led = wg.Led(self, size=24)
-        self.dome_led.grid(row=3, column=0)
-        MyLabel(self, text=' Cupola  ', font=wg.H2_FONT).grid(row=3, column=1, sticky='w', pady=10)
-                                                     # area centrale cupola
-        dome_fr = MyFrame(self, padx=5, pady=3)
-        MyLabel(dome_fr, text='Azimuth(°) ', font=wg.H3_FONT).pack(side=tk.LEFT)
-        MyLabel(dome_fr, text='   Corr. ').pack(side=tk.LEFT)
-        self.dome_az_f = MyNumber(dome_fr, fmt='%.1f', width=6, font=wg.H3_FONT)
-        self.dome_az_f.pack(side=tk.LEFT)
-        MyLabel(dome_fr, text='   Target: ').pack(side=tk.LEFT)
-        self.trgt_az_f = MyNumber(dome_fr, width=6, fmt='%.1f', font=wg.H3_FONT)
-        self.trgt_az_f.pack(side=tk.LEFT)
-        MyLabel(dome_fr, text=' ').pack(side=tk.LEFT, expand=1, fill=tk.X)
-        dome_fr.grid(row=3, column=2, pady=4, padx=2, sticky='w')
-
-        mid_fr = MyFrame(self)
-        self.slew_b = MyButton(mid_fr, text='Vai a >', command=self.slewto)
-        self.slew_b.pack(side=tk.LEFT)
-#       wg.ToolTip(self.slew_b, text='Vai ad azimuth impostato')
-        self.slew_e = MyEntry(mid_fr, font=wg.H4_FONT, width=5)
-        wg.ToolTip(self.slew_e, text='Imposta azimuth manualmente')
-        self.slew_e.pack(side=tk.LEFT)
-        MyLabel(mid_fr, text=' ').pack(side=tk.LEFT, expand=1, fill=tk.X)
-        self.lstep_b = MyButton(mid_fr, text='<', width=6, command=lambda: self.step('l'))
-        self.lstep_b.pack(side=tk.LEFT)
-        self.lmove_b = MyButton(mid_fr, text='<<', width=6, command=lambda: self.move('l'))
-        self.lmove_b.pack(side=tk.LEFT)
-        self.stop_b = MyButton(mid_fr, text='Stop', width=6, command=self.stop)
-        self.stop_b.pack(side=tk.LEFT)
-        self.rmove_b = MyButton(mid_fr, text='>>', width=6, command=lambda: self.move('r'))
-        self.rmove_b.pack(side=tk.LEFT)
-        self.rstep_b = MyButton(mid_fr, text='>', width=6, command=lambda: self.step('r'))
-        self.rstep_b.pack(side=tk.LEFT)
-        mid_fr.grid(row=4, column=2, sticky='we', ipady=4)
-
-        bot_fr = MyFrame(self)
-        self.pos_b = MyButton(bot_fr, text='Vai a    ', width=12, command=self.goto_saved)
-        self.pos_b.pack(side=tk.LEFT)
-        self.set_save()
-        wg.ToolTip(self.pos_b, text='Muovi a posizione salvata')
-        MySpacer(bot_fr, 4)
-        self.park_b = MyButton(bot_fr, text='Park', command=self.park)
-        self.park_b.pack(side=tk.LEFT)
-        wg.ToolTip(self.park_b, text='Muovi in posizione Park')
-        bot_fr.grid(row=5, column=2, sticky='e', ipady=4)
-
-        MyFrame(self, border=4,                      # linea di separazione
-                relief=tk.SUNKEN).grid(row=6, column=0,
-                                       columnspan=5, sticky='we', ipady=1)
-        self.tel_led = wg.Led(self, size=24)
-        self.tel_led.grid(row=7, column=0)
-        tel_lab = MyLabel(self, text=' Telescopio  ', font=wg.H3_FONT)
-        tel_lab.grid(row=7, column=1, ipady=10)
-        self.tel_ws = [tel_lab]
-                                                    # area centrale telescopio
-        tel_fr = MyFrame(self)
-        lab = MyLabel(tel_fr, text=' HA(h): ')
-        lab.pack(side=tk.LEFT)
-        self.tel_ws.append(lab)
-        self.tel_ha = MyCoord(tel_fr, precision='m', mode=':', width=6, font=wg.H4_FONT)
-        self.tel_ha.pack(side=tk.LEFT)
-        lab = MyLabel(tel_fr, text='   DE(°): ')
-        lab.pack(side=tk.LEFT)
-        self.tel_ws.append(lab)
-        self.tel_de = MyCoord(tel_fr, precision='m', mode=':', width=6, font=wg.H4_FONT)
-        self.tel_de.pack(side=tk.LEFT)
-        lab = MyLabel(tel_fr, text='   Lato: ')
-        lab.pack(side=tk.LEFT)
-        self.tel_ws.append(lab)
-        self.tside = MyLabel(tel_fr, text='', width=3, bg='black', fg='lightgreen', font=wg.H4_FONT)
-        self.tside.pack(side=tk.LEFT)
-        spa = MySpacer(tel_fr, 3)
-        self.tel_ws.append(spa)
-        self.slave_b = MyButton(tel_fr, text='Slave', command=self.set_slave)
-        self.slave_b.pack(side=tk.LEFT)
-        spa = MySpacer(tel_fr)
-        self.tel_ws.append(spa)
-        tel_fr.grid(row=7, column=2, sticky='nswe')
-        self.tel_ws.append(tel_fr)
-        self.foc_w = FocusButtons(self, self.showerror)
-        wg.ToolTip(self.foc_w, text='Fuoco secondario')
-        self.foc_w.grid(row=7, column=4)
-        if self.tel_sampler:
-            wg.ToolTip(self.slave_b, text='Attiva inseguimento telescopio')
-        else:
-            self.tel_ha.config(state=tk.DISABLED)
-            self.tel_de.config(state=tk.DISABLED)
-            self.tel_led.set(color=BLACK)
-            self.slave_b.config(state=tk.DISABLED)
-            wg.ToolTip(tel_fr, text='Accesso al telescopio non attivo')
-
-        MyFrame(self, border=2,                               # separatore verticale
-                relief=tk.SUNKEN).grid(row=3,
-                                       column=3, rowspan=3, sticky='ns', ipadx=1, padx=3)
-
-                                                        # colonna con azionamenti
-        az1_fr = MyFrame(self)
-        self.apre_b = MyButton(az1_fr, text='Apre', command=lambda: self.portello('o'))
-        self.apre_b.pack(side=tk.LEFT)
-        self.chiude_b = MyButton(az1_fr, text='Chiude', command=lambda: self.portello('c'))
-        self.chiude_b.pack(side=tk.LEFT)
-        wg.ToolTip(az1_fr, text='Aziona portello')
-        az1_fr.grid(row=3, column=4)
-        az2_fr = MyFrame(self)
-        self.sw1_b = MyButton(az2_fr, text=SW1_TEXT, command=lambda: self.sw_tog(0))
-        self.sw1_b.pack(side=tk.LEFT)
-        self.sw2_b = MyButton(az2_fr, text=SW2_TEXT, command=lambda: self.sw_tog(1))
-        self.sw2_b.pack(side=tk.LEFT)
-        wg.ToolTip(az2_fr, text='Interruttori ausiliari')
-        az2_fr.grid(row=4, column=4)
-        az3_fr = MyFrame(self)
-        self.sw3_b = MyButton(az3_fr, text=SW3_TEXT, command=lambda: self.sw_tog(2))
-        self.sw3_b.pack(side=tk.LEFT)
-        self.sw3_b = MyButton(az3_fr, text=SW4_TEXT, command=lambda: self.sw_tog(3))
-        self.sw3_b.pack(side=tk.LEFT)
-        wg.ToolTip(az3_fr, text='Interruttori ausiliari')
-        az3_fr.grid(row=5, column=4)
-        self.sws = [False, False, False, False]
-        self.stline = MyLabel(self, text='', border=4, font=wg.H4_FONT,
-                              fg=REDCOLOR, pady=4, relief=tk.RIDGE)
-        self.stline.grid(row=8, column=0, columnspan=5, sticky='we')
-        self.moreinfo = tk.Text(self, bg=BACKGROUND, fg=FRG_INFO)
-        self.moreinfo.bind('<Button-1>', lambda *x: self.moreinfo.delete('1.0', tk.END))
-        self.moreinfo.grid(row=10, column=0, columnspan=5, sticky='nswe')
-        self.manual(True)
-        self.errtime = 0
-        self.help('init.hlp')
-        self.update()
-
-    def clearinfo(self, *_unused):
-        'Azzera pagina di testo'
-        self.moreinfo.delete("1.0", tk.END)
-
-    def update(self):                       #pylint: disable=R0912
-        'aggiorna stato panel'
-        if self.errtime and self.errtime < time.time():
-            self.showerror()
-        if self.tel_sampler:
-            tel_stat = self.tel_sampler.tel_status()
-            self.tel_de.set(tel_stat[0])
-            self.tel_ha.set(tel_stat[3])
-            self.tside.config(text=tel_stat[2])
-            if tel_stat[2]:
-                self.tel_led.set(GREEN)
-            else:
-                self.tel_led.set(GRAY)
-        stat = self.dct.get_status()
-        if stat.connected:
-            self.dome_led.set(GREEN)
-            if stat.direct == 0:
-                self.dome_az_f.set(stat.domeaz, fg=FOREGROUND)
-            else:
-                self.dome_az_f.set(stat.domeaz, fg=YELLOW)
-            if stat.targetaz >= 0:
-                self.trgt_az_f.set(stat.targetaz)
-            else:
-                self.trgt_az_f.clear()
-            if stat.isslave:
-                if self.slave_b.cget('state') == tk.NORMAL:
-                    self.manual(False)
-                    self.show_slave(True)
-            else:
-                if self.tel_sampler and self.slave_b.cget('state') == tk.DISABLED:
-                    self.manual(True)
-                    self.show_slave(False)
-        else:
-            self.dome_led.set(GRAY)
-        self.after(UPDATE_TIME, self.update)
+                relief=tk.SUNKEN).pack(expand=1, fill=tk.X)
+        self.stline = MyLabel(wrapper, text='', border=4, font=wg.H4_FONT,
+                              fg=REDCOLOR, pady=4, padx=5, relief=tk.RIDGE)
+        self.stline.pack(expand=1, fill=tk.X)
+        wrapper.pack()
+        self.clrtime = 0
 
     def showerror(self, msg=''):
         'scrive avviso errore'
         if msg:
             self.stline.config(text='ERR: '+msg, fg=REDCOLOR)
-            self.errtime = time.time()+ERROR_TIME
+            self.clrtime = time.time()+ERROR_TIME
         else:
             self.stline.config(text='')
-            self.errtime = 0
-
-    def slewto(self):
-        'slew to azimuth'
-        _debug('slewto()')
-        azh = self.slew_e.get().strip()
-        ret = self.dct.slew_to_azimuth(azh)
-        self.showerror(ret)
+            self.clrtime = 0
 
     def stop(self):
         'interrompi movimento'
@@ -523,6 +344,259 @@ class DTracker(MyFrame):                           # pylint: disable=R0901,R0902
             ret = self.dct.close_shutter()
         self.showerror(ret)
 
+    def park(self):
+        'Ritorna in posizione park'
+        if not self.im_busy():
+            ret = self.dct.park()
+            self.showerror(ret)
+
+    def im_busy(self):
+        'Verifica se cupola è "busy" (in movimento o in modo slave)'
+        stat = self.dct.get_status()
+        ret = True
+        if stat.isslave:
+            self.showerror('Comando disabilitato in modo "slave"')
+        elif stat.direct != 0:
+            self.showerror('Comando disabilitato in con cupola in moto')
+        else:
+            ret = False
+        return ret
+
+    def update_always(self, stat):
+        'stub: method must be implemented in derived classes'
+        raise RuntimeError(self.VIRT_UNIMPL)
+
+    def update_when_connected(self, stat):
+        'stub: method must be implemented in derived classes'
+        raise RuntimeError(self.VIRT_UNIMPL)
+
+    def update_when_unconnected(self, stat):
+        'stub: method must be implemented in derived classes'
+        raise RuntimeError(self.VIRT_UNIMPL)
+
+    def update(self):
+        'periodically update GUI'
+        if self.clrtime and self.clrtime < time.time():
+            self.showerror()
+        stat = self.dct.get_status()
+        self.update_always(stat)
+        if stat.connected:
+            self.update_when_connected(stat)
+        else:
+            self.update_when_unconnected(stat)
+        self.after(UPDATE_TIME, self.update)
+
+class DTracker(_DTrackerBase):                     # pylint: disable=R0901,R0902,R0904
+    'Widget per asservimento cupola'
+    def __init__(self, parent, config, dct, tls):          # pylint: disable=R0915,R0914
+        super().__init__(parent, dct)
+        self.config = config
+        self.telsamp = tls
+                                                      # Bottoni con icone
+        bfr = tk.Frame(self.main, borderwidth=0)
+        gear = tk.Button(bfr, image=wg.get_icon('gear', 24, 'brown'),
+                        bg=BACKGROUND, command=self.setup_enable)
+        gear.pack(side=tk.LEFT)
+        wg.ToolTip(gear, text='Impostazioni')
+        tk.Label(bfr, text='  ', fg=BACKGROUND,
+                 bg=BACKGROUND, borderwidth=0).pack(side=tk.LEFT, expand=1, fill=tk.BOTH)
+        info = tk.Button(bfr, image=wg.get_icon('info', 24, 'cyan'),
+                        bg=BACKGROUND, command=self.info)
+        info.pack(side=tk.LEFT)
+        wg.ToolTip(info, text='Informazioni')
+        bfr.grid(row=1, column=0, columnspan=3, sticky='w')
+
+        MyFrame(self.main, border=4,                      # linea di separazione
+                relief=tk.SUNKEN).grid(row=2, column=0,
+                                       columnspan=5, sticky='we', ipady=1)
+
+        self.dome_led = wg.Led(self.main, size=24)
+        self.dome_led.grid(row=3, column=0)
+        MyLabel(self.main, text=' Cupola  ',
+                font=wg.H2_FONT).grid(row=3, column=1, sticky='w', pady=10)
+                                                     # area centrale cupola
+        dome_fr = MyFrame(self.main, padx=5, pady=3)
+        MyLabel(dome_fr, text='Azimuth(°) ', font=wg.H3_FONT).pack(side=tk.LEFT)
+        MyLabel(dome_fr, text='   Corr. ').pack(side=tk.LEFT)
+        self.dome_az_f = MyNumber(dome_fr, fmt='%.1f', width=6, font=wg.H3_FONT)
+        self.dome_az_f.pack(side=tk.LEFT)
+        MyLabel(dome_fr, text='   Target: ').pack(side=tk.LEFT)
+        self.trgt_az_f = MyNumber(dome_fr, width=6, fmt='%.1f', font=wg.H3_FONT)
+        self.trgt_az_f.pack(side=tk.LEFT)
+        MyLabel(dome_fr, text=' ').pack(side=tk.LEFT, expand=1, fill=tk.X)
+        dome_fr.grid(row=3, column=2, pady=4, padx=2, sticky='w')
+
+        mid_fr = MyFrame(self.main)
+        self.slew_b = MyButton(mid_fr, text='Vai a >', command=self.slewto)
+        self.slew_b.pack(side=tk.LEFT)
+        wg.ToolTip(self.slew_b, text='Vai ad azimuth impostato')
+        self.slew_e = MyEntry(mid_fr, font=wg.H4_FONT, width=5)
+        wg.ToolTip(self.slew_e, text='Imposta azimuth manualmente')
+        self.slew_e.pack(side=tk.LEFT)
+        MyLabel(mid_fr, text=' ').pack(side=tk.LEFT, expand=1, fill=tk.X)
+        self.lstep_b = MyButton(mid_fr, text='<', width=6, command=lambda: self.step('l'))
+        self.lstep_b.pack(side=tk.LEFT)
+        self.lmove_b = MyButton(mid_fr, text='<<', width=6, command=lambda: self.move('l'))
+        self.lmove_b.pack(side=tk.LEFT)
+        self.stop_b = MyButton(mid_fr, text='Stop', width=6, command=self.stop)
+        self.stop_b.pack(side=tk.LEFT)
+        self.rmove_b = MyButton(mid_fr, text='>>', width=6, command=lambda: self.move('r'))
+        self.rmove_b.pack(side=tk.LEFT)
+        self.rstep_b = MyButton(mid_fr, text='>', width=6, command=lambda: self.step('r'))
+        self.rstep_b.pack(side=tk.LEFT)
+        mid_fr.grid(row=4, column=2, sticky='we', ipady=4)
+
+        bot_fr = MyFrame(self.main)
+        self.pos_b = MyButton(bot_fr, text='Vai a    ', width=12, command=self.goto_saved)
+        self.pos_b.pack(side=tk.LEFT)
+        self.set_save()
+        wg.ToolTip(self.pos_b, text='Muovi a posizione salvata')
+
+        MySpacer(bot_fr, 4)
+        self.park_b = MyButton(bot_fr, text='Park', command=self.park)
+        self.park_b.pack(side=tk.LEFT)
+        wg.ToolTip(self.park_b, text='Muovi in posizione Park')
+        bot_fr.grid(row=5, column=2, sticky='e', ipady=4)
+
+        MyFrame(self.main, border=4,                      # linea di separazione
+                relief=tk.SUNKEN).grid(row=6, column=0,
+                                       columnspan=5, sticky='we', ipady=1)
+        self.tel_led = wg.Led(self.main, size=24)
+        self.tel_led.grid(row=7, column=0)
+        tel_lab = MyLabel(self.main, text=' Telescopio  ', font=wg.H3_FONT)
+        tel_lab.grid(row=7, column=1, ipady=10)
+        self.tel_ws = [tel_lab]
+                                                    # area centrale telescopio
+        tel_fr = MyFrame(self.main)
+        lab = MyLabel(tel_fr, text=' HA(h): ')
+        lab.pack(side=tk.LEFT)
+        self.tel_ws.append(lab)
+        self.tel_ha = MyCoord(tel_fr, precision='m', mode=':', width=6, font=wg.H4_FONT)
+        self.tel_ha.pack(side=tk.LEFT)
+        lab = MyLabel(tel_fr, text='   DE(°): ')
+        lab.pack(side=tk.LEFT)
+        self.tel_ws.append(lab)
+        self.tel_de = MyCoord(tel_fr, precision='m', mode=':', width=6, font=wg.H4_FONT)
+        self.tel_de.pack(side=tk.LEFT)
+        lab = MyLabel(tel_fr, text='   Lato: ')
+        lab.pack(side=tk.LEFT)
+        self.tel_ws.append(lab)
+        self.tside = MyLabel(tel_fr, text='', width=3, bg='black', fg='lightgreen', font=wg.H4_FONT)
+        self.tside.pack(side=tk.LEFT)
+        spa = MySpacer(tel_fr, 3)
+        self.tel_ws.append(spa)
+        self.slave_b = MyButton(tel_fr, text='Slave', command=self.set_slave)
+        self.slave_b.pack(side=tk.LEFT)
+        spa = MySpacer(tel_fr)
+        self.tel_ws.append(spa)
+        tel_fr.grid(row=7, column=2, sticky='nswe')
+        self.tel_ws.append(tel_fr)
+        self.foc_w = FocusButtons(self.main, self.showerror)
+        wg.ToolTip(self.foc_w, text='Fuoco secondario')
+        self.foc_w.grid(row=7, column=4)
+        if self.telsamp:
+            wg.ToolTip(self.slave_b, text='Attiva inseguimento telescopio')
+        else:
+            self.tel_ha.config(state=tk.DISABLED)
+            self.tel_de.config(state=tk.DISABLED)
+            self.tel_led.set(color=BLACK)
+            self.slave_b.config(state=tk.DISABLED)
+            wg.ToolTip(tel_fr, text='Accesso al telescopio non attivo')
+
+        MyFrame(self.main, border=2,                               # separatore verticale
+                relief=tk.SUNKEN).grid(row=3,
+                                       column=3, rowspan=3, sticky='ns', ipadx=1, padx=3)
+
+                                                        # colonna con azionamenti
+        az1_fr = MyFrame(self.main)
+        self.apre_b = MyButton(az1_fr, text='Apre', command=lambda: self.portello('o'))
+        self.apre_b.pack(side=tk.LEFT)
+        self.chiude_b = MyButton(az1_fr, text='Chiude', command=lambda: self.portello('c'))
+        self.chiude_b.pack(side=tk.LEFT)
+        wg.ToolTip(az1_fr, text='Aziona portello')
+        az1_fr.grid(row=3, column=4)
+        az2_fr = MyFrame(self.main)
+        self.sw1_b = MyButton(az2_fr, text=SW1_TEXT, command=lambda: self.sw_tog(0))
+        self.sw1_b.pack(side=tk.LEFT)
+        self.sw2_b = MyButton(az2_fr, text=SW2_TEXT, command=lambda: self.sw_tog(1))
+        self.sw2_b.pack(side=tk.LEFT)
+        wg.ToolTip(az2_fr, text='Interruttori ausiliari')
+        az2_fr.grid(row=4, column=4)
+        az3_fr = MyFrame(self.main)
+        self.sw3_b = MyButton(az3_fr, text=SW3_TEXT, command=lambda: self.sw_tog(2))
+        self.sw3_b.pack(side=tk.LEFT)
+        self.sw3_b = MyButton(az3_fr, text=SW4_TEXT, command=lambda: self.sw_tog(3))
+        self.sw3_b.pack(side=tk.LEFT)
+        wg.ToolTip(az3_fr, text='Interruttori ausiliari')
+        az3_fr.grid(row=5, column=4)
+        self.sws = [False, False, False, False]
+        self.lower = tk.Frame(self, bg=BACKGROUND, border=0, padx=10, pady=10, height=100)
+        self.lower.pack(expand=1, fill=tk.BOTH)
+        self.lower_content = None
+        tk.Frame(self, bg=BACKGROUND).pack(expand=1, fill=tk.Y)  # spaziatore verticale
+
+        self.setup_panel = SetupPanel(self.lower, self.config,
+                                      self.dct, self.set_cback, self.showerror)
+        self.setup_panel.grid()
+        self.setup_panel.grid_remove()
+
+        self.moreinfo = tk.Text(self.lower, bg=BACKGROUND, width=100, fg=FRG_INFO, border=0)
+#       self.moreinfo.bind('<Button-1>', lambda *x: self.moreinfo.grid_remove)
+        self.moreinfo.grid(sticky=tk.W+tk.E)
+        self.help('init.hlp')
+        self.manual(True)
+        self.running = True
+        self.update()
+
+    def stop(self):
+        'Gestione terminazione'
+        _debug('Ricevuto stop')
+        self.dct.stop_server()
+        self.running = False
+
+    def update_always(self, stat):
+        'execute at each update cycle'
+        if self.telsamp:
+            tel_stat = self.telsamp.tel_status()
+            self.tel_de.set(tel_stat[0])
+            self.tel_ha.set(tel_stat[3])
+            self.tside.config(text=tel_stat[2])
+            if tel_stat[2]:
+                self.tel_led.set(GREEN)
+            else:
+                self.tel_led.set(GRAY)
+
+    def update_when_connected(self, stat):
+        'execute whan dome is connected'
+        self.dome_led.set(GREEN)
+        if stat.direct == 0:
+            self.dome_az_f.set(stat.domeaz, fg=FOREGROUND)
+        else:
+            self.dome_az_f.set(stat.domeaz, fg=YELLOW)
+        if stat.targetaz >= 0:
+            self.trgt_az_f.set(stat.targetaz)
+        else:
+            self.trgt_az_f.clear()
+        if stat.isslave:
+            if self.slave_b.cget('state') == tk.NORMAL:
+                self.manual(False)
+                self.show_slave(True)
+        else:
+            if self.telsamp and self.slave_b.cget('state') == tk.DISABLED:
+                self.manual(True)
+                self.show_slave(False)
+
+    def update_when_unconnected(self, stat):
+        self.dome_led.set(GRAY)
+        self.showerror('Comunicazione con cupola non attiva')
+
+    def slewto(self):
+        'slew to azimuth'
+        _debug('slewto()')
+        azh = self.slew_e.get().strip()
+        ret = self.dct.slew_to_azimuth(azh)
+        self.showerror(ret)
+
     def sw_tog(self, nsw):
         'apre/chiude switch N. 0-3'
         _debug(f'sw_tog({nsw})')
@@ -530,12 +604,11 @@ class DTracker(MyFrame):                           # pylint: disable=R0901,R0902
         ret = self.dct.switch(nsw, self.sws[nsw])
         self.showerror(ret)
 
-    def setup(self):
+    def setup_enable(self):
         'lancia popup per setup'
         if not self.im_busy():
-            panel = SetupPanel(self, self.dct, self.set_cback, self.showerror)
-            panel.grab_set()
-            self.wait_window(panel)
+            self.moreinfo.grid_remove()
+            self.setup_panel.grid()
 
     def help(self, what):
         'Scrive aiuto nella zona di testo'
@@ -568,32 +641,34 @@ class DTracker(MyFrame):                           # pylint: disable=R0901,R0902
         text.append(f'  Posizione di park: {parkaz:.1f}°')
         text.append('')
         text.append('Parametri di configurazione:')
-        text.append(f'  Versione: {_GB.config["version"]}')
-        text.append(f'  Nome file: {_GB.config["filename"]}')
-        text.append(f'  Posizione salvata: {_GB.config["save_position"]:.1f}°')
-        text.append(f'  Indirizzo IP telescopio: {_GB.config["tel_ip"]}:{_GB.config["tel_port"]}')
-        text.append(f'  Directory dati: {_GB.config["local_store"]}')
+        text.append(f'  Versione: {self.config["version"]}')
+        text.append(f'  Nome file: {self.config["filename"]}')
+        text.append(f'  Posizione salvata: {self.config["save_position"]:.1f}°')
+        text.append(f'  Indirizzo IP telescopio: {self.config["tel_ip"]}:{self.config["tel_port"]}')
+        text.append(f'  Directory dati: {self.config["local_store"]}')
         self.moreinfo.delete(1.0, tk.END)
         for line in text:
             self.moreinfo.insert(tk.END, '  '+line+'\n')
+        self.setup_panel.grid_remove()
+        self.moreinfo.grid()
 
     def set_cback(self):
         'Scrive valore posizione salvata'
         self.set_save()
-        msg = utils.store_config(_GB.config)
+        msg = utils.store_config(self.config)
         self.showerror(msg)
 
     def set_save(self):
         'Scrive valore posizione salvata'
-        _debug(f'set_save(). Now: {_GB.config.get("save_position")}')
-        if 'save_position' not in _GB.config:
-            _GB.config['save_position'] = 90
-        self.pos_b.config(text=f'Vai a {_GB.config["save_position"]:.1f}° ')
+        _debug(f'set_save(). Now: {self.config.get("save_position")}')
+        if 'save_position' not in self.config:
+            self.config['save_position'] = 90
+        self.pos_b.config(text=f'Vai a {self.config["save_position"]:.1f}° ')
 
     def goto_saved(self):
         'Vai a posizione salvata'
         if not self.im_busy():
-            azh = _GB.config['save_position']
+            azh = self.config['save_position']
             ret = self.dct.slew_to_azimuth(azh)
             self.showerror(ret)
 
@@ -647,18 +722,11 @@ class DTracker(MyFrame):                           # pylint: disable=R0901,R0902
                 self.manual(False)
                 self.show_slave(True)
 
-    def park(self):
-        'Ritorna in posizione park'
-        if not self.im_busy():
-            ret = self.dct.park()
-            self.showerror(ret)
-
-class DTrackerMin(MyFrame):          # pylint: disable=R0901,R0902
+class DTrackerMin(_DTrackerBase):          # pylint: disable=R0901,R0902
     'Widget minimale per controllo cupola'
     def __init__(self, parent, dct):
-        super().__init__(parent)
-        self.dct = dct
-        fr1 = MyFrame(self, padx=5, pady=8)
+        super().__init__(parent, dct)
+        fr1 = MyFrame(self.main, padx=5, pady=8)
         MyLabel(fr1, text=' Azimuth (°) ', font=wg.H3_FONT).pack(side=tk.LEFT)
         self.dome_az_f = MyNumber(fr1, fmt='%.1f', width=6, font=wg.H3_FONT)
         self.dome_az_f.pack(side=tk.LEFT)
@@ -673,12 +741,13 @@ class DTrackerMin(MyFrame):          # pylint: disable=R0901,R0902
         self.chiude_b = MyButton(frp, text='Chiude', command=lambda: self.portello('c'))
         self.chiude_b.pack(side=tk.LEFT)
         frp.pack(side=tk.LEFT)
+
         wg.ToolTip(frp, text='Aziona portello')
         MySpacer(fr1, 2)
         self.dome_led = wg.Led(fr1, size=24)
         self.dome_led.pack(side=tk.LEFT)
         fr1.pack()
-        fr2 = MyFrame(self, padx=5, pady=8)
+        fr2 = MyFrame(self.main, padx=5, pady=8)
         self.lstep_b = MyButton(fr2, text='<', width=6,
                                 font=wg.H3_FONT, command=lambda: self.step('l'))
         self.lstep_b.pack(side=tk.LEFT)
@@ -694,105 +763,48 @@ class DTrackerMin(MyFrame):          # pylint: disable=R0901,R0902
                                 font=wg.H3_FONT, command=lambda: self.step('r'))
         self.rstep_b.pack(side=tk.LEFT)
         fr2.pack()
-        self.stline = MyLabel(self, text='', border=4, font=wg.H4_FONT,
-                              fg=REDCOLOR, pady=4, relief=tk.RIDGE)
-        self.stline.pack(expand=1, fill=tk.X)
-        self.errtime = 0
         self.update()
 
-    def showerror(self, msg=''):
-        'scrive avviso errore'
-        if msg:
-            self.stline.config(text='ERR: '+msg, fg=REDCOLOR)
-            self.errtime = time.time()+ERROR_TIME
+    def update_always(self, stat):
+        'Do nothing'
+
+    def update_when_connected(self, stat):
+        self.dome_led.set(GREEN)
+        if stat.direct == 0:
+            self.dome_az_f.set(stat.domeaz, fg=FOREGROUND)
         else:
-            self.stline.config(text='')
-            self.errtime = 0
+            self.dome_az_f.set(stat.domeaz, fg=YELLOW)
 
-    def stop(self):
-        'interrompi movimento'
-        _debug('stop()')
-        ret = self.dct.stop()
-        self.showerror(ret)
-
-    def step(self, direct):
-        'passo breve a sinistra/destra'
-        _debug(f'step({direct})')
-        if direct == 'l':
-            ret = self.dct.step_left()
-        else:
-            ret = self.dct.step_right()
-        self.showerror(ret)
-
-    def move(self, direct):
-        'movimento a sinistra/destra'
-        _debug(f'move({direct})')
-        if direct == 'l':
-            ret = self.dct.start_left()
-        else:
-            ret = self.dct.start_right()
-        self.showerror(ret)
-
-    def portello(self, mode):
-        'comando apri/chiudi portello'
-        _debug(f'portello({mode})')
-        if mode == 'o':
-            ret = self.dct.open_shutter()
-        else:
-            ret = self.dct.close_shutter()
-        self.showerror(ret)
-
-    def park(self):
-        'Ritorna in posizione park'
-        if not self.im_busy():
-            ret = self.dct.park()
-            self.showerror(ret)
-
-    def im_busy(self):
-        'Verifica se cupola è "busy" (in movimento o in modo slave)'
-        stat = self.dct.get_status()
-        ret = True
-        if stat.isslave:
-            self.showerror('Comando disabilitato in modo "slave"')
-        elif stat.direct != 0:
-            self.showerror('Comando disabilitato in con cupola in moto')
-        else:
-            ret = False
-        return ret
-
-    def update(self):                       #pylint: disable=R0912
-        'aggiorna stato panel'
-        if self.errtime and self.errtime < time.time():
-            self.showerror()
-        stat = self.dct.get_status()
-        if stat.connected:
-            self.dome_led.set(GREEN)
-            if stat.direct == 0:
-                self.dome_az_f.set(stat.domeaz, fg=FOREGROUND)
-            else:
-                self.dome_az_f.set(stat.domeaz, fg=YELLOW)
-        else:
-            self.dome_led.set(GRAY)
-        self.after(UPDATE_TIME, self.update)
+    def update_when_unconnected(self, stat):
+        self.dome_led.set(GRAY)
+        self.showerror('Comunicazione con cupola non attiva')
 
 def main():                 #pylint: disable=R0915,R0912,R0914
     'funzione main'
     if '-v' in sys.argv:
         print(__version__)
         sys.exit()
-    try:
-        opts, _unused = getopt.getopt(sys.argv[1:], 'Ddhkmp:st')
-    except getopt.error:
-        print('Errore negli argomenti')
+
+    if '-h' in sys.argv:
+        root = tk.Tk()
+        wdg = wg.MessageText(root, __doc__.format(__version__))
+        wdg.pack()
+        root.mainloop()
         sys.exit()
+    try:
+        opts, _unused = getopt.getopt(sys.argv[1:], 'Ddkmp:st')
+    except getopt.error:
+        print('Errore negli argomenti. Usa "-h" per aiuto')
+        sys.exit()
+
     _GB.debug = False
     dcdebug = False
-    _GB.config = utils.get_config()
+    config = utils.get_config()
     sim_k8055 = False
     ipport = 0
     mode = ''
     sim_tel = False
-    tel_sampler = True
+    telsamp = True
     minimized = False
     for opt, val in opts:
         if opt == '-d':
@@ -803,52 +815,50 @@ def main():                 #pylint: disable=R0915,R0912,R0914
             ipport = int(val)
         elif opt == '-s':
             sim_tel = True
-            _GB.config = utils.get_config(simul=True)
+            config = utils.get_config(simul=True)
             mode += ' [Sim. Tel.]'
-        elif opt == '-h':
-            print(__doc__)
-            sys.exit()
         elif opt == '-k':
             mode += ' [Sim. K8055]'
             sim_k8055 = True
         elif opt == '-t':
-            tel_sampler = False
+            telsamp = False
         elif opt == '-m':
             minimized = True
     root = tk.Tk()
-    if not _GB.config:
+    if not config:
         error = '\n\nErrore lettura del file di configurazione\n\n'
         wdg = wg.MessageText(root, error, bg=wg.ERROR_CLR)
         wdg.pack()
         root.mainloop()
         sys.exit()
     logname = utils.make_logname('dome')
-    logger = utils.set_logger(logname, debug=dcdebug)
-    if tel_sampler:
+    logger = utils.set_logger(logname)
+    if telsamp:
         tls = ts.tel_start(logger, sim_tel)
     else:
         tls = None
     error = None
     try:
-        dct = dc.start_server(ipport=ipport, logger=logger, tel_sampler=tls, sim_k8055=sim_k8055)
+        dct = dc.start_server(ipport=ipport, logger=logger, telsamp=tls,
+                              sim_k8055=sim_k8055, language='it', debug=dcdebug)
     except Exception as exc:               # pylint: disable=W0703
-        error = '\n\n'+str(exc)+'\n\n'
+        error = '\n\n'+str(exc)+'\n'
     root.title(f'OPC - Controllo cupola - V. {__version__}{mode}')
     if error:
         wdg = wg.MessageText(root, error, bg=wg.ERROR_CLR)
         wdg.pack()
         root.mainloop()
-        if tel_sampler:
+        if telsamp:
             tls.tel_stop()
         sys.exit()
     if minimized:
         wdg = DTrackerMin(root, dct)
     else:
-        wdg = DTracker(root, dct, tls)
+        wdg = DTracker(root, config, dct, tls)
     wdg.pack()
     root.iconphoto(False, wg.get_icon('dome', 24))
     root.mainloop()
-    if tel_sampler:
+    if telsamp:
         tls.tel_stop()
     tls.tel_stop()
     dct.stop_server()

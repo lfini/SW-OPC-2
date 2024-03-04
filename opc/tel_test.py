@@ -1,5 +1,5 @@
 '''
-tel_test.py - Programma di test per tel_sampler
+tel_test.py - Programma di test per telsamp.py
 
 
 Il test lancia due thread di interrogazione del telescopio
@@ -10,7 +10,7 @@ import time
 
 from threading import thread
 
-import tel_sampler as ts
+import telsamp as ts
 
 class GLOB:                  # pylint: disable=R0903
     'Goon flag'

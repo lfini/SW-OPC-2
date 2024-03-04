@@ -120,7 +120,7 @@ def protect(func):
         return ret
     return wrapper
 
-def debug(*pars):
+def _debug(*pars):
     "Show debug lines"
     if GLOB.debug:
         print("GUIDE DBG>", *pars)
@@ -150,7 +150,7 @@ def last_file(dirpath, keep=0):
 
 def init_donuts(image_file, ntiles, ident):
     "Inizializza Donuts con nuova immagine"
-    debug(f'init_donuts({image_file}, {ntiles}, {ident})')
+    _debug(f'init_donuts({image_file}, {ntiles}, {ident})')
     send('LOG', f'[{ident}] Init. donuts on image: {image_file} (ntiles={ntiles})')
     try:
         donuts = Donuts(refimage=image_file, image_ext=0, overscan_width=20, prescan_width=20,
@@ -163,9 +163,9 @@ def init_donuts(image_file, ntiles, ident):
         return None
     return donuts
 
-def send(code, what=None):
+def send(code, what):
     "comunica con GUI"
-    debug(f'send({code}, {what})')
+    _debug(f'send({code}, {what})')
     GLOB.comm.put((code, what))
 
 def adjust_tel(trans, xsh, ysh, ident):     #pylint: disable=R0914,R0912,R0915
@@ -256,7 +256,8 @@ def guideloop(comm_serv, sci_dir, sci_calib, sci_tiles,      # pylint: disable=R
         Abilita/disabilita il modo debug
     """
     GLOB.debug = debug_on
-    debug("Guide process started")
+    _debug('Guide process started')
+    _debug(f'{sci_dir=}, {sci_calib=}, {aux_dir=}, {aux_calib=}')
     GLOB.comm = comm_serv
     config = get_config(simul=simul)
     if simul:
@@ -264,44 +265,35 @@ def guideloop(comm_serv, sci_dir, sci_calib, sci_tiles,      # pylint: disable=R
     else:
         send('LOG', "Connecting to telescope")
     if not config:
-        send('LOG', "*** Error: No configuration file")
-        send("TERM")
+        send("ERR", "No configuration file")
         return
     GLOB.tel = TeleCommunicator(config["tel_ip"], config["tel_port"],
                                 timeout=config["tel_tmout"])
     ra_deg = GLOB.tel.get_target_rah()
     de_deg = GLOB.tel.get_target_deh()
     if ra_deg is None or de_deg is None:
-        send('LOG', "*** Error: telescope not responding")
-        send("TERM")
+        send("ERR", "Telescope not responding")
         return
     ra_deg *= HOUR_TO_DEG
     if not os.path.isdir(sci_dir):
-        send('LOG', f'*** Error: directory not found ({sci_dir})')
-        send("TERM")
+        send("ERR", f'Directory not found ({sci_dir})')
         return
     sci_trans = Transformer(sci_calib)
     if sci_trans.error:
-        send('LOG', f'[sci] *** Error on calibration file [{sci_trans.error}]')
-        send("TERM")
+        send("ERR", f'[sci] invalid calibration file [{sci_trans.error}]')
         return
     send('LOG', "[sci] Calib.matrix: "+sci_trans.str_matrix())
     send('LOG', "[sci] Image scale: "+sci_trans.str_scale())
     send('LOG', "[sci] Image size: "+sci_trans.str_size())
     send('LOG', "[sci] Image orient.: "+sci_trans.str_orient())
-    debug("Science calibration file OK")
-    if aux_dir:
-        if not os.path.isdir(aux_dir):
-            send('LOG', f'[aux] *** Error: directory not found ({aux_dir})')
-            send("TERM")
-            return
+    _debug("Science calibration file OK")
+    if aux_calib:
         aux_trans = Transformer(aux_calib)
         if aux_trans.error:
-            send('LOG', f'[aux] *** Error reading calibration file [{aux_trans.error}]')
-            send("TERM")
+            send("ERR", f'[aux] invalid calibration file [{aux_trans.error}]')
             return
         send('LOG', "[aux] Calib.params: "+str(aux_trans))
-        debug("Aux calibration file OK")
+        _debug("Aux calibration file OK")
     send("ORNT", sci_trans.orient)
     guard_x = sci_trans.imagew/10
     guard_y = sci_trans.imageh/10
@@ -313,7 +305,7 @@ def guideloop(comm_serv, sci_dir, sci_calib, sci_tiles,      # pylint: disable=R
         time.sleep(LOOP_TIME)
         if not GLOB.comm.empty():
             cmd = GLOB.comm.get()
-            debug("Input command:", cmd)
+            _debug("Input command:", cmd)
             if cmd == "STOP":
                 break
             send('LOG', "*** Error: illegal command: "+str(cmd))
@@ -323,7 +315,7 @@ def guideloop(comm_serv, sci_dir, sci_calib, sci_tiles,      # pylint: disable=R
                 send('LOG', "[sci] First image: "+first_sci_im)
                 sci_donuts = init_donuts(first_sci_im, sci_tiles, "sci")
                 if not sci_donuts:
-                    send("TERM")
+                    send("ERR", 'Donut initialization failed')
                     break
                 last_sci_im = first_sci_im
             continue
@@ -349,13 +341,13 @@ def guideloop(comm_serv, sci_dir, sci_calib, sci_tiles,      # pylint: disable=R
                 send('LOG', "[sci] Recentering Donuts")
                 sci_donuts = init_donuts(last_sci_im, sci_tiles, "sci")
                 if not sci_donuts:
-                    send("TERM")
+                    send("ERR", 'Donuts initialization failed')
                     break
             adjusted = adjust_tel(sci_trans, xsh, ysh, "sci")   # Movimento telescopio
             if not adjusted:
-                send("TERM")
+                send("ERR", "Telescope movement failed")
                 break
-        elif aux_dir:                # Aggiusta con guida ausiliaria
+        elif aux_calib:                # Aggiusta con guida ausiliaria
             if not aux_donuts:
                 first_aux_im = last_file(aux_dir, keep=3)
                 if first_aux_im:
@@ -383,6 +375,7 @@ def guideloop(comm_serv, sci_dir, sci_calib, sci_tiles,      # pylint: disable=R
                 adjusted = adjust_tel(aux_trans, xsh, ysh, "aux")   # Movimento telescopio
                 if not adjusted:
                     aux_donuts = None
+    send("TERM", "stopped by master")
 
 def test():
     "Procedura di test"

@@ -1,12 +1,16 @@
 Procedure python per la gestione delle osservazioni ad OPC. Versione 2
 
-Luca Fini (luca.fini@gmail.com) - febbraio 2023
+Luca Fini (luca.fini@gmail.com) - febbraio 2024
 
-Codice previsto per python 3.8 e superiore
+Codice previsto per python 3.10 e superiore
+
+Dipendenze python: astropy, donuts, astroquery
 
 
 ISTRUZIONI DI INSTALLAZIONE (Windows)
 ========================================
+
+Dipendenze python per windows: winshell, win32com, webdav3
 
 L'installazione consiste semplicemente nell'estrarre i files dall'archivio in
 una cartella dedicata ed eseguire:
@@ -14,9 +18,12 @@ una cartella dedicata ed eseguire:
       setup.bat
 
 La procedura di installazione crea un collegamento sul desktop per il lancio
-del programma di controllo principale (logger.py)
+della GUI principale (opc_gui.py)
 
 Dopo installazione la cartella può essere cancellata.
+
+la procedura installa anche i files necessari per ASTAP, il programma per
+la risoluzione astrometrica, utile per il funzionamento di HOMER.
 
 
 ISTRUZIONI DI INSTALLAZIONE (Linux)
@@ -29,20 +36,42 @@ Occorre poi aggiungere il path del package opc a PYTHONPATH
 
 Le procedure possono poi essere eseguite specificando il relativo path
 
-=====================
-CONTENUTO del PACKAGE
-=====================
+=============================================
+CONTENUTO del PACKAGE (solo files principali)
+=============================================
 
-./opc      - Vari moduli python utilizzati dalle procedure
+directory  - Contenuto
 
-             Dipendenze: easygui, tkinter, pywin32, winshell
+./astap    - Programma di "plate solving" locale. Versioni Linux e windows
 
-             ascom.py: Supporto per protocollo ASCOM
+./dome     - Controllore della cupola.
 
-             astro.py: Implementazione di alcune funzioni di carattere astronomico (per
-                       evitare dipendenze da librerie esterne)
+./focus    - Controllore dei rele per controllo del fuoco al secondario
 
-             configure.py: Gestione file di configurazione
+./gui      - Varie interfaccie grafiche
+
+             dtracker.py: controllo cupola.
+                          Normalmente lanciato dalla procedura principale, può essere
+                          eseguito come standalone. Ha un opzione per essere eseguito
+                          in forma ridotta (consente solo movimenti manuali)
+
+             hgui.py: GUI per Homer.
+                      Normalmente lanciato dalla procedura principale, può essere
+                      eseguito come standalone.
+
+             opc_gui.py: procedura principale
+
+             widgets.py: definizione widget utilizzati per la GUI
+
+             ./icons/*:   Files per icone
+
+./homer    - Moduli di supporto per homer (usati da hgui.py)
+
+./opc      - Vari moduli utilizzati dalle procedure
+
+             configure.py: gestione file di configurazione
+                           Normalmente lanciato dalla procedura principale, può essere
+                           eseguito come standalone.
 
              setup.py:     Procedura per installazione Windows
 
@@ -50,19 +79,13 @@ CONTENUTO del PACKAGE
                           telescopio. Può essere usato come procedura per l'invio manuale
                           di comandi al telescopio (help: python telecomm.py -h)
 
+             telsamp.py:  Processo di interrogazione stato del telescopio. Mantiene una versione
+                          minimale dello stato del telescopio per minimizzare la frequenza
+                          dei comandi di ingterrogazione.
+
              webdav.py:   Supporto per protocollo WebDAV
 
-             widgets.py: definizione widget utilizzati per la GUI
 
-             ./icons/*:   Files per icone
-
-
-./dome   - Controllo movimenti cupola 
-
-./focus  - Procedura per il controllo del fuocheggiatore sul secondario
-
-./homer  - Programma per la guida del telescopio utilizzando le immagini scientifiche
-           e opzionalmente immagini da una camera ausiliaria.
 
 NOTA: Tutti i programmi richiedono un file di configurazione che viene creato automaticamente
       al primo run, e può essere successivamente modificato

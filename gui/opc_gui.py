@@ -1,93 +1,128 @@
 '''
-OPC - GUI per gestione osservazioni
+OPC - GUI per gestione osservazioni. Vers. {}
 
-Uso;:
-        python opc_gui.py [-d] [-h] [-k] [-p port] [-s] [-v]
+Uso:
+        python opc_gui.py [-d] [-D] [-h] [-k] [-p port] [-s] [-T]
 
 Dove:
        -d  Attiva debug locale GUI
        -D  Attiva debug controller cupola
        -h  Mostra questa pagina ed esce
-       -k  Usa simulatore di scheeda k8055
+       -k  Usa simulatore di scheda k8055
        -p  Attiva il modo "alpaca" del server della cupola sul port dato
        -s  Usa simulatore di telescopio
+       -T  Attiva debug TelSampler
 '''
 
 import sys
 import getopt
 import os.path
-import time
+import pprint
 import tkinter as tk
 from tkinter import ttk
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 # pylint: disable=C0413
 from opc import utils
-import opc.widgets as wg
 from opc import dome_ctrl as dc
-from opc import tel_sampler as ts
-from opclogger import ObsInit, OpcLogger
-from dtracker import DTracker
+from opc import telsamp as ts
+from opc.configure import MakeConfig
+#from opclogger import ObsInit, OpcLogger
+import dtracker as dt
 from hgui import HomerGUI
-
-__author__ = 'Luca Fini'
-__version__ = '1.0'
-__date__ = 'Marzo 2023'
+import widgets as wg
 
 class _GB:           # pylint: disable=R0903
     'globals senza usare global'
     debug = False
+    sim_tel = False
 
-def _debug(*par):
+def _debug(par):
     'Scrivi linea di debug'
     if _GB.debug:
-        print('DBG>', *par)
+        print('GUI DBG>', par)
 
-class MainPanel(ttk.Notebook):
+class MyConfig(tk.Frame):
+    'pannello per configurazione'
+    def __init__(self, master):
+        super().__init__(master, bg=dt.BACKGROUND)
+        self.cfg = MakeConfig(self)
+        self.cfg.pack(side=tk.LEFT)
+        tk.Button(self, text='REGISTRA', padx=10, pady=20,
+                  command=self.cfg.saveme).pack(side=tk.LEFT, anchor=tk.S)
+
+class MainPanel(ttk.Notebook):          #pylint: disable=R0901
     'Pannello principale'
-    def __init__(self, master, datadir, dct, tls):
+    def __init__(self, master, config, datadir, dct, tls):     #pylint: disable=R0913
+        _debug('MainPanel:')
+        _debug(f'  config={pprint.pformat(config)}')
+        _debug(f'  {datadir=})')
         super().__init__(master)
-        opcl = OpcLogger(self, datadir, tls)
-        dtrk = DTracker(self, dct, tls)
-        hgui = HomerGUI(self, datadir)
-        self.add(opcl, text='OPC logger')
-        self.add(dtrk, text='Cupola')
-        self.add(hgui, text='Homer')
+        self.dtrk = dt.DTracker(self, config, dct, tls)
+        self.hgui = HomerGUI(self, config, datadir, simul=_GB.sim_tel, debug=_GB.debug)
+        self.cfg = MyConfig(self)
+        dummy = tk.Frame(self)
+        self.add(self.dtrk, text='Cupola') #, sticky='nwe')
+        self.add(self.hgui, text='Homer') #, sticky='nwe')
+        self.add(dummy, text='                                                         ',
+                 state=tk.DISABLED, sticky='nwe')
+        self.add(self.cfg, text='Configura', sticky='nwe')
 
-def main():                 #pylint: disable=R0915,R0912
+    def endpanel(self):
+        'Gestione terminazione'
+        _debug('Ricevuto segnale terminazione')
+        self.hgui.stop()
+        self.dtrk.stop()
+        _debug('Inviato stop ai tre pannelli')
+        self.after(1000, self.endwait)
+
+    def endwait(self):
+        'Aspetta stop dei pannelli'
+        _debug('attesa terminazione pannelli')
+        notyet = self.hgui.running or self.dtrk.running
+        if notyet:
+            self.after(1000, self.endwait)
+        else:
+            _debug('pannelli terminati')
+            self.master.destroy()
+
+def main():                 #pylint: disable=R0914,R0912,R0915
     'funzione main'
-    if '-v' in sys.argv:
-        print(__version__)
+    if '-h' in sys.argv:
+        root = tk.Tk()
+        wdg = wg.MessageText(root, __doc__.format(utils.get_version()))
+        wdg.pack(expand=1)
+        root.mainloop()
         sys.exit()
     try:
-        opts, _unused = getopt.getopt(sys.argv[1:], 'dhkp:st')
+        opts, _unused = getopt.getopt(sys.argv[1:], 'Ddkp:sT')
     except getopt.error:
         print('Errore negli argomenti')
         sys.exit()
     _GB.debug = False
     config = utils.get_config()
     sim_k8055 = False
+    dcdebug = False
     ipport = 0
     mode = ''
-    sim_tel = False
-    tel_sampler = True
+    _GB.sim_tel = False
+    tel_debug = False
     for opt, val in opts:
         if opt == '-d':
             _GB.debug = True
+        elif opt == '-D':
+            dcdebug = True
         elif opt == '-p':
             ipport = int(val)
         elif opt == '-s':
-            sim_tel = True
+            _GB.sim_tel = True
             config = utils.get_config(simul=True)
             mode += ' [Sim. Tel.]'
-        elif opt == '-h':
-            print(__doc__)
-            sys.exit()
         elif opt == '-k':
             mode += ' [Sim. K8055]'
             sim_k8055 = True
-        elif opt == '-t':
-            tel_sampler = False
+        elif opt == '-T':
+            tel_debug = True
     root = tk.Tk()
     if not config:
         error = '\n\nErrore lettura del file di configurazione\n\n'
@@ -96,40 +131,46 @@ def main():                 #pylint: disable=R0915,R0912
         root.mainloop()
         sys.exit()
     logname = utils.make_logname('dome')
-    logger = utils.set_logger(logname, debug=_GB.debug)
+    logger = utils.set_logger(logname)
 
-    root.title("Pannello controllo OPC")
-    starter = ObsInit(root, config)
-    starter.grid()
-    wg.set_position(root, (0.01, 0.01))
-    root.wait_window(starter)
-    _debug('fine primo passo')
-    if not starter.valid:
-        sys.exit()
-    if tel_sampler:
-        tls = ts.tel_start(logger, sim_tel)
+    root.title(f"Pannello controllo OPC - v. {utils.get_version()}")
+#   starter = ObsInit(root, config)
+#   starter.grid()
+#   wg.set_position(root, (0.01, 0.01))
+#   root.wait_window(starter)
+#   _debug('fine primo passo')
+#   if not starter.valid:
+#       sys.exit()
+    if tel_debug:
+        tls = ts.tel_start(logger, _GB.sim_tel)
     else:
-        tls = None
+        tls = ts.tel_start(None, _GB.sim_tel)
     error = None
     try:
-        dct = dc.start_server(ipport=ipport, logger=logger, tel_sampler=tls, sim_k8055=sim_k8055)
+        dct = dc.start_server(ipport=ipport, logger=logger, telsamp=tls,
+                              sim_k8055=sim_k8055, language='it', debug=dcdebug)
     except Exception as exc:               # pylint: disable=W0703
-        error = '\n\n'+str(exc)+'\n\n'
+        error = '\n\n'+str(exc)+'\n'
     if error:
-        text = error+'\n\n'+__doc__
+        text = error+'\n\n'
         wdg = wg.MessageText(root, text, bg=wg.ERROR_CLR)
         wdg.pack()
         root.mainloop()
         if tls:
             tls.tel_stop()
+        _debug('Opc GUI terminata')
         sys.exit()
-    wdg = MainPanel(root, starter.datadir, dct, tls)
+    datadir = config.get('local_store')
+    style = ttk.Style()
+    style.configure('TNotebook', background=dt.BACKGROUND)
+    wdg = MainPanel(root, config, datadir, dct, tls)
     wdg.pack()
     root.iconphoto(False, wg.get_icon('opclogo', 24))
+    root.wm_protocol('WM_DELETE_WINDOW', wdg.endpanel)
     root.mainloop()
     if tls:
         tls.tel_stop()
-    dct.stop_server()
+    _debug('Opc GUI terminata')
 
 if __name__ == '__main__':
     main()

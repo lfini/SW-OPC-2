@@ -1,9 +1,9 @@
 """
-tel_sampler.py - support modo slave per dome_ctrl.py
+telsamp.py - support modo slave per dome_ctrl.py
 
 Uso per test:
 
-    python tel_sampler.py [-s]
+    python telsamp.py [-s]
 
 where:
     -s:  usa simulatore telescopio
@@ -71,13 +71,30 @@ class _GB:                       # pylint: disable=R0903
     loop = False
     test_loop = False
     thread = None
-    tel_sampler = None
+    telsamp = None
 
-class _NoLogger:
-    def info(self, *_unused):
-        'dummy method'
-    def error(self, *_unused):
-        'dummy method'
+def _debug(msg):
+    'mostra messaggio di debug'
+    if _GB.debug:
+        print('TS DBG>', msg)
+
+class Logger:
+    'Gestione log'
+    def __init__(self, logger):
+        self._logger = logger
+
+    def info(self, msg):
+        'Messaggio informativo'
+        _debug('Info: '+msg)
+        if self._logger:
+            self._logger.info(msg)
+
+    def error(self, msg):
+        'Messaggio di errore'
+        _debug('Err: '+msg)
+        if self._logger:
+            self._logger.error(msg)
+
 
 def _ddmmss_decode(the_str, with_sign=False):
     "Decodifica stringa DD.MM.SS. Riporta float"
@@ -101,13 +118,14 @@ def _send_cmd(command):
     skt.settimeout(TIMEOUT)
     try:
         skt.connect((_GB.tel_ip, _GB.tel_port))
-    except IOError:
+    except IOError as exc:
+        _GB.logger.error(f'TelSamp - connect exception: {exc}')
         return None
     try:
         skt.sendall(command.encode("ascii"))
     except socket.timeout:
-        skt.close()
         _GB.logger.error(f'TelSamp - send timeout [cmd:{command}]')
+        skt.close()
         return None
     ret = b""
     try:
@@ -262,18 +280,17 @@ def _tel_status():
     return ded, rah, psi, hah, azh
 
 #################################################### API inizio
-def tel_start(logger=None, simul=False):
+def tel_start(logger=None, simul=False, debug=False):
     'lancia loop di interrogazione  del telescopio'
-    if _GB.tel_sampler is not None:
-        return _GB.tel_sampler
+    _GB.debug = debug
+    if _GB.telsamp is not None:
+        _debug('already running')
+        return _GB.telsamp
     config = utils.get_config(simul)
     _GB.tel_ip = config['tel_ip']
     _GB.tel_port = config['tel_port']
     _GB.longitude = config['lon']
-    if logger:
-        _GB.logger = logger
-    else:
-        _GB.logger = _NoLogger()
+    _GB.logger = Logger(logger)
 
     _GB.logger.info(f'TelSamp API: tel_start(tel_ip={_GB.tel_ip}, tel_port={_GB.tel_port})')
     _GB.thread = threading.Thread(target=_tel_loop)
@@ -286,8 +303,8 @@ def tel_start(logger=None, simul=False):
         _GB.logger.error('TelSamp - thread not started')
         return None
     _GB.logger.info(f'TelSamp - thread {_GB.thread.native_id} running')
-    _GB.tel_sampler = _TelSampler()
-    return _GB.tel_sampler
+    _GB.telsamp = _TelSampler()
+    return _GB.telsamp
 
 class _TelSampler:
     'campionatore dello stato del telescopio'

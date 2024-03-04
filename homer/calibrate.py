@@ -5,23 +5,31 @@ Calibrazione per Homer 2.0
 
 Uso per test:
 
-    python calibrate.py <image.fit> [executable]
+    python calibrate.py [-r] [-k] <image>
 
 Dove:
-    <image.fit>:  nome file immagine
-    executable:   eseguibile ASTAP (se non specificato, risolve
-                  solo col metodo remoto
+      -k     Salva i files generati dal solver
+
+      -r     Usa plate solver remoto (Astrometry.net). Se non specificato
+             usa solver locale (astap_cli.exe)
+
+    <image>  nome file immagine
 '''
 import sys
 import os
+import shutil
 import math
 import time
 import subprocess
 import json
 from astroquery.astrometry_net import AstrometryNet
+from astropy.io import fits
 
-#ASTROMETRY_KEY = 'jsknghvdadfvxljk'       # Luca Naponiello
-ASTROMETRY_KEY = 'cvnpxtttxrpqaqju'        # Luca Fini
+#ASTROMETRY_KEY = 'jsknghvdadfvxljk'       # chiave di Luca Naponiello
+ASTROMETRY_KEY = 'cvnpxtttxrpqaqju'        # chiave di Luca Fini
+
+ASTAP_NAME_WIN = 'astap_cli.exe'   # nome eseguibile astap per Windows
+ASTAP_NAME_LNX = 'astap_cli'       # path eseguibile astap per Linux
 
 AST_NET_TIMEOUT = 1200    # Timeout for Astrometry.net method
 PSOLV_TIMEOUT = 180       # Timeout for PlateSolve method
@@ -30,6 +38,13 @@ RADTOARCSEC = 206264.80624709636
 RADTODEG = 57.29577951308232
 ARCSECTORAD = 4.84813681109536e-06
 DEGTORAD = 0.017453292519943295
+
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+ASTAP_WIN = os.path.join(BASE_DIR, 'astap', ASTAP_NAME_WIN)
+ASTAP_LNX = os.path.join(BASE_DIR, 'astap', ASTAP_NAME_LNX)
+ASTAP_DB = os.path.join(BASE_DIR, 'astap', 'db')
+ASTAP_EXE = ASTAP_WIN if sys.platform == 'win32' else ASTAP_LNX
+L_SOLVED = os.path.join(BASE_DIR, 'astap', 'l_solved')
 
 class MyQueue:                            # pylint: disable=R0903
     "Emulazione Queue per test"
@@ -86,36 +101,37 @@ class Transformer:                            #pylint: disable=R0903,R0902
         d_dec = self.cd_21*xpix + self.cd_22*ypix
         return d_ras, d_dec
 
+ASTAP_KEYW = (b'CD1_1', b'CD1_2', b'CD2_1', b'CD2_2', b'CRVAL1', b'CRVAL2')
+
 def parse(fname):
     'Parse lines from astap .ini file'
     ret = {}
-    with open(fname, encoding='utf8') as f_in:
+# Workaround: si legge il file in binario, perché i nomi di file con caratteri "strani"
+# in windows non risultano scritti in codifica utf8 e danno errori nel parsing
+    with open(fname, mode='rb') as f_in:
         for line in f_in:
-            name, value = line.strip().split('=')
-            if name == 'PLTSOLVD':
-                if value == 'F':
+            name, value = line.strip().split(b'=')[:2]
+            if name == b'PLTSOLVD':
+                if value == b'F':
                     return {}
                 continue
-            if name == 'CMDLINE':
-                continue
-            if name == 'DIMENSIONS':
-                xdim, ydim = (int(x) for x in value.split('x'))
-                ret['IMAGEW'] = xdim
-                ret['IMAGEH'] = ydim
-            else:
-                ret[name] = float(value)
+            if name in ASTAP_KEYW:
+                ret[name.decode('ascii')] = float(value)
     return ret
 
-def calibrate_astap(executable, impath, outq):   #nopylint: disable=R0914,R0913
+def unlink(fname):
+    'unlink ignorando errori'
+    try:
+        os.unlink(fname)
+    except FileNotFoundError:
+        pass
+
+def calibrate_astap(impath, outq):   #nopylint: disable=R0914,R0913
     "Genera file di calibrazione usando astap"
-    executable = os.path.abspath(executable)
     outq.put(('TMO', PSOLV_TIMEOUT))
     outq.put(('LOG', f'Calibrating via astap: {impath}'))
-    command = [executable, '-f', impath]
-    outq.put(('LOG', f'Command: {str(command)}'))
-    outfn = os.path.splitext(impath)[0]
-    outpath = outfn+'.ini'
-    wcspath = outfn+'.wcs'
+    command = [ASTAP_EXE, '-d', ASTAP_DB, '-o', L_SOLVED, '-f', impath]
+    outq.put(('LOG', f'Command: {" ".join(command)}'))
     time0 = time.time()
     try:
         subprocess.run(command, timeout=PSOLV_TIMEOUT, check=True)
@@ -124,18 +140,19 @@ def calibrate_astap(executable, impath, outq):   #nopylint: disable=R0914,R0913
         outq.put(('LOG', f'Solver exception: {str(exc)} after {elaps:.3f} sec'))
     else:
         elaps = time.time()-time0
-    if os.path.exists(outpath):
-        parsed = parse(outpath)
-        os.unlink(outpath)
+    parsed = None
+    inipath = L_SOLVED+'.ini'
+    if os.path.exists(inipath):
+        outq.put(('LOG', f'Parsing astap output file: {inipath}'))
         try:
-            os.unlink(wcspath)
-        except FileNotFoundError:
-            pass
-        return parsed
-    outq.put(('LOG', 'Error: ASTAP output file not found'))
-    return None
+            parsed = parse(inipath)
+        except Exception as exc:       # pylint: disable=W0703
+            outq.put(('LOG', f'Exception parsing solution: {str(exc)}'))
+    else:
+        outq.put(('LOG', 'Error: ASTAP output file not found'))
+    return parsed
 
-def calibrate_astrometrynet(impath, outq):          #nopylint: disable=R0914
+def calibrate_astrometrynet(impath, outq):
     "Genera file di calibrazione usando la API di astrometry.net"
     outq.put(('TMO', AST_NET_TIMEOUT))
     outq.put(('LOG', f'Calibrating via Astrometry.net: {impath}'))
@@ -152,19 +169,39 @@ def calibrate_astrometrynet(impath, outq):          #nopylint: disable=R0914
         return None
     return wcs_header
 
-def calibrate(impath, outq, savepath, executable=None):    #pylint: disable=R0914
+def calibrate(impath, outq, savepath, local=True, keep=False):    #pylint: disable=R0914,R0915
     'Called by homer to do calibration'
     time0 = time.time()
     impath = os.path.abspath(impath)
-    if executable:
-        ret = calibrate_astap(executable, impath, outq)
+    hdr = fits.getheader(impath)
+    imagew = hdr['NAXIS1']
+    imageh = hdr['NAXIS2']
+    if local:
+        ret = calibrate_astap(impath, outq)
         method = 'ASTAP'
+        inipath = L_SOLVED+'.ini'
+        wcspath = L_SOLVED+'.wcs'
+        try:
+            if keep:
+                shutil.move(inipath, '.')
+                shutil.move(wcspath, '.')
+            else:
+                os.unlink(inipath)
+                os.unlink(wcspath)
+        except FileNotFoundError:
+            pass
     else:
         ret = calibrate_astrometrynet(impath, outq)
         method = 'ASTROMETRY'
+        if ret and keep:
+            with open('r_solved.wcs', 'w', encoding='utf8') as fout:
+                for key, val in ret.items():
+                    print(f'{key}: {val}', file=fout)
     elaps = time.time()-time0
     if ret:
         outq.put(('LOG', f'Solving process terminated in {elaps:.3f} sec'))
+        ret['IMAGEW'] = imagew
+        ret['IMAGEH'] = imageh
         cd11 = ret['CD1_1']*3600    # Convert trasf.matrix in arcsec
         cd12 = ret['CD1_2']*3600
         cd21 = ret['CD2_1']*3600
@@ -198,18 +235,20 @@ def test():
     if "-h" in sys.argv:
         print(__doc__)
         sys.exit()
-    if len(sys.argv) == 3:
-        impath = sys.argv[1]
-        executable = sys.argv[2]
-        savefile = 'l_solved.json'
-    elif len(sys.argv) == 2:
-        impath = sys.argv[1]
-        executable = None
-        savefile = 'r_solved.json'
-    else:
-        print('Errore argomenti. Usa "-h" per aiuto')
+    if len(sys.argv) < 2:
+        print('\nErrore argomenti: usa -h per aiuto')
         sys.exit()
-    ret = calibrate(impath, MyQueue(), savefile, executable)
+    keep = '-k' in sys.argv
+    impath = sys.argv[-1]
+    if not os.path.exists(impath):
+        print(f'\nFile immagine non tovato [{impath}]')
+        sys.exit()
+    savefile = 'solved.json'
+    if '-r' in sys.argv:
+        islocal = False
+    else:
+        islocal = True
+    ret = calibrate(impath, MyQueue(), savefile, islocal, keep)
     if ret:
         print('Creato file:', savefile)
     return ret

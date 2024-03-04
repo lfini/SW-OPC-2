@@ -8,7 +8,11 @@ import os
 import time
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+#pylint: disable=C0413
+
 from opc.version import get_version        # pylint: disable=C0413
+from opc.sendlog import sendlog
 
 LONG_FMT = "%Y-%m-%d %H:%M:%S"
 SHORT_FMT = "%H:%M:%S"
@@ -68,6 +72,7 @@ class Logger:                                  # pylint: disable=R0903,R0902
     def stop(self):
         "Termina il logger"
         self.logf.close()
+        sendlog(self.logname)
 
     def flush(self):
         "Forza scrittura buffer"
