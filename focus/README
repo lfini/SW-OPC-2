@@ -28,7 +28,17 @@ Linux:
 
 Il modulo hidapi su Linux non richiede altre installazioni, ma di norma l'uso
 della porta USB richiede privilegi di sistema. Allo scopo di consentire l'uso
-ad utente non privilegiato, occorre copiare il file: 70-relay.rules nella
+ad utente non privilegiato, occorre copiare il file: 51-usbrelay.rules nella
 directory: /etc/udev/rules.d/.
 
 L'accesso non  privilegiato sarà consentito dopo un reboot.
+
+NOTA: esistono due packages installabili: hid e hidapi. Quello da installare è: hidapi.
+      se è installato anche hid, si ha un conflitto ed il programma non funziona.
+
+      Per verificare:
+            python -m pip freeze | grep hid
+
+      eventualmente per disinstallare hid:
+
+            python -m pip unistall hid

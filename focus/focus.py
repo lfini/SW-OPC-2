@@ -24,7 +24,6 @@ OFF_CMD_2 = (0, 0x02)
 
 BTFONT = 'Helvetica 18 bold'
 
-
 class Focuser(tk.Frame):
     def __init__(self, master):
         super().__init__(master)

@@ -1,6 +1,0 @@
-# relay.rules for Star Micronics Co., Ltd HIDRelay
-#
-# # put this file into /etc/udev/rules.d
-#
-
-SUBSYSTEM=="usb", ATTR{idVendor}=="0519", ATTR{idProduct}=="2018", MODE=="0666"
