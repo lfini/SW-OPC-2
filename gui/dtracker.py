@@ -33,7 +33,7 @@ from opc import telsamp as ts
 import widgets as wg
 
 __author__ = 'Luca Fini'
-__version__ = '2.3'
+__version__ = '2.4'
 __date__ = 'Luglio 2024'
 
 ENTRY_BG = '#808080'
@@ -280,6 +280,7 @@ class SetupPanel(tk.Frame):
 
     def save_pos(self):
         'salva posizione corrente'
+        self.azh = self.dct.get_status().domeaz
         _debug(f'Save position: {self.azh}')
         self.cback('conf', self.azh)
 
