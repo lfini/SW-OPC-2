@@ -20,9 +20,9 @@ import time
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # pylint: disable=C0413
-from onstepdrv import OnStepCommunicator
 
 from opc import utils
+from opc.onstepdrv import OnStepCommunicator
 from opc.astro import OPC, float2ums, loc_st_now
 
 __version__ = "3.0"

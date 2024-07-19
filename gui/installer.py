@@ -9,7 +9,7 @@ import tkinter as tk
 ROOTDIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ROOTDIR)
 
-import gui.widgets as wg
+import gui.widgets as wg        # pylint: disable=C0413
 
 LOOPTIME = 50
 
@@ -75,16 +75,16 @@ class Installer:
         'Attende chiusura popup'
         if self.wdg is not None:
             self.mainw.wait_window(self.wdg)
-        return None
 
     def wait(self):
+        'Attende termine widget'
         self.root.wait_window(self.mainw)
 
 def main():
     'Procedura di test'
     inst = Installer()
     while True:
-        ans = input('linea da aggiuingere (c: clear, e: errore, q: termina)? ').strip()
+        ans = input('linea da aggiungere (c: clear, e: errore, q: termina)? ').strip()
         if ans == 'q':
             break
         if ans == 'c':

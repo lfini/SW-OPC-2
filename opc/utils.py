@@ -33,8 +33,9 @@ import opc.constants as const
 
 #__version__ = "1.03"   # Aggiunto invio file di log a www.lfini.cloud (da logger e dtracker)
 
-__version__ = "2.0"   # Modificato tutto per unica applicazione di gestione osservazione
-__date__ = "Gennaio 2024"
+#__version__ = "2.0"   # Modificato tutto per unica applicazione di gestione osservazione
+__version__ = "2.1"    # Corretto bug che impediva di uscure dal modo "slave" di DTracker
+__date__ = "Luglio 2024"
 __author__ = 'Luca Fini'
 
 _CONFIG_PATH = os.path.join(const.HOMEDIR, const.CONFIG_FILENAME)
@@ -121,6 +122,12 @@ def set_logger(filepath):
     logger.addHandler(fhndl)
     logger.filename = filepath
     return logger
+
+def installed_versions():
+    'genera lista delle versioni installate'
+    dlist = [x for x in os.listdir(const.INSTALLROOT) if x.startswith('opc-')]
+    dlist.sort()
+    return dlist
 
 if __name__ == "__main__":
     if "-l" in sys.argv:

@@ -4,13 +4,13 @@ Luca Fini (luca.fini@gmail.com) - febbraio 2024
 
 Codice previsto per python 3.10 e superiore
 
-Dipendenze python: astropy, donuts, astroquery
+Dipendenze python: hidapi, astropy, donuts, astroquery
 
 
 ISTRUZIONI DI INSTALLAZIONE (Windows)
 ========================================
 
-Dipendenze python per windows: winshell, win32com, webdav3
+Ulteriori dipendenze python per windows: winshell, win32com, webdav3
 
 L'installazione consiste semplicemente nell'estrarre i files dall'archivio in
 una cartella dedicata ed eseguire:
@@ -18,7 +18,8 @@ una cartella dedicata ed eseguire:
       setup.bat
 
 La procedura di installazione crea un collegamento sul desktop per il lancio
-della GUI principale (opc_gui.py)
+della GUI principale (opc_gui.py) e per la eventuale selezione della versione
+attiva.
 
 Dopo installazione la cartella può essere cancellata.
 
@@ -28,6 +29,8 @@ la risoluzione astrometrica, utile per il funzionamento di HOMER.
 
 ISTRUZIONI DI INSTALLAZIONE (Linux)
 ========================================
+(Nota: il package hidapi ha questo nome se in stallato via PIP, se installato
+via APT usare: python3-hid)
 
 L'installazione consiste semplicemente nell'estrarre i files dall'archivio in
 una cartella dedicata.
@@ -60,6 +63,8 @@ directory  - Contenuto
                       eseguito come standalone.
 
              opc_gui.py: procedura principale
+
+             switch.py: procedura per cambio versione attiva
 
              widgets.py: definizione widget utilizzati per la GUI
 
@@ -94,8 +99,5 @@ NOTA: Tutti i programmi richiedono un file di configurazione che viene creato au
 ALTRE PROCEDURE DI SUPPORTO
 ===========================
 
-link.bat:   Procedura per visualizzare le istruzioni di creazione del collegamento in
-            ambiente Windows
-
-setup.bat:  Procedura di lancio dell'installazione per Windows
+setup.cmd:  Procedura di lancio dell'installazione per Windows
  

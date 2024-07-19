@@ -1,14 +1,23 @@
 """
 setup.py - Installatore per Windows
 
-Normalmente lanciato da setup.bat
+Normalmente lanciato da setup.cmd
+
+Uso interattivo per test:
+
+    python setup.py [-h] [-d]
+
+Dove:
+
+    -h:   mostra pagina di aiuto
+    -d:   modo "dryrun", esegue la procedura senza copiare o modificare niente
 """
 
 import os
 import sys
 import shutil
-import tkinter as tk
 
+#pylint: disable=W0611
 try:
     import winshell
 except ImportError:
@@ -33,28 +42,27 @@ else:
 ROOTDIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ROOTDIR)
 
-from gui.installer import Installer
+#pylint: disable=C0413
+from gui.switch import makemainlink, makeswitchlink
+from gui.switch import DESTDIR
 from opc.utils import get_version
-
-TITLE = "OPC-software. Installazione"
 
 MISSING = []
 
+if not WINSHELL:
+    MISSING.append("winshell")
 if not WIN32COM:
     MISSING.append("win32com")
 if not WEBDAV:
     MISSING.append("webdavclient3")
 
-_DRYRUN = False
-if sys.platform != "win32":
-    _DRYRUN = True
-
+WIN32 = sys.platform == "win32"
 
 MISSING_MSG = """
 
  I seguenti moduli python non sono installati:
 
-      %s
+      {}
 
  Per l'installazione si può usare il comando:
 
@@ -78,108 +86,85 @@ Vuoi procedere comunque? (rispondendo "SI" sarà ripetuta
 l'installazione eliminando quella precedente)
 '''
 
-HOMEDIR = os.path.expanduser("~")
-DESTDIR = os.path.join(HOMEDIR, "opc-sw", get_version().strip())
-MAIN_PROC = "opc-gui.py"
-OPCICONFILE = "opc_128.ico"
-OPCGUIPATH = os.path.join(DESTDIR, 'gui', MAIN_PROC)
-OPCICON = os.path.join(DESTDIR, "gui", "icons", OPCICONFILE)
-PYTHONW = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+NOT_ADMIN = '''
+La procedura richiede privilegi di Amministratore.
 
-INST_GUI = Installer(title=TITLE, prefix=' ')
+Non è possibile proseguire
+'''
 
-def make_pth(pkg_dir):
+VERSDIR = 'opc-'+get_version().strip()
+
+class GLOB:                #pylint: disable=R0903
+    'Global variables'
+    gui = None
+    dryrun = False
+
+def makepth(pkg_dir):
     "Crea i file .pth"
     found = ""
     for pth in sys.path:
         if pth.endswith("site-packages"):
             found = pth
-    pth_file = os.path.join(found, "opc.pth")
-    if not _DRYRUN:
-        with open(pth_file, "w", encoding='utf-8') as f_out:
-            print(pkg_dir, file=f_out)
-    return pth_file
-
-def message(msg):
-    "Segnala mancanza win32com"
-    INST_GUI.warning(msg)
-    INST_GUI.waitmsg()
+    if found:
+        pth_file = os.path.join(found, "opc.pth")
+        if not GLOB.dryrun:
+            with open(pth_file, "w", encoding='utf-8') as f_out:
+                print(pkg_dir, file=f_out)
+        return pth_file
+    return 'Non creato: manca directory in PYTHONPATH'
 
 def copyfile(src, dest):
     "Copia un file creando le directory se necessario"
-    if not _DRYRUN:
+    if not GLOB.dryrun:
         targetdir = os.path.dirname(dest)
         os.makedirs(targetdir, exist_ok=True)
         shutil.copy(src, dest)
 
-def makelinks(workdir, links):
-    "Crea links sul desktop"
-    desktop = winshell.desktop()                # genera link in Desktop
-    shell = Dispatch('WScript.Shell')
-    for link in links:
-        shortc = shell.CreateShortCut(os.path.join(desktop, "{link[0]}.lnk"))
-        shortc.Targetpath = PYTHONW
-        shortc.Arguments = link[1]
-        shortc.WorkingDirectory = workdir
-        shortc.IconLocation = link[2]
-        shortc.save()
-        INST_GUI.addtext(f'Generato collegamento: Desktop -> {link[1]}')
-
-if "-v" in sys.argv:
-    INST_GUI.addtext(VERIFICA)
-    INST_GUI.prefix('   ')
-    INST_GUI.addtext(f"ROOTDIR: {ROOTDIR}")
-    INST_GUI.addtext(f"HOMEDIR: {HOMEDIR}")
-    INST_GUI.addtext(f"DESTDIR: {DESTDIR}")
-    INST_GUI.addtext(f"OPCGUIPATH: {OPCGUIPATH}")
-    INST_GUI.addtext(f"OPCICON: {OPCICON}")
-    INST_GUI.addtext(f"PYTHONW: {PYTHONW}")
-    INST_GUI.wait()
-    sys.exit()
-
-if "-s" in sys.argv:
-    SHORTCUT = SHORTCUT_2%(PYTHONW, OPCGUIPATH, PYTHONW, OPCICON)
-    INST_GUI.info(SHORTCUT)
-    INST_GUI.waitmsg()
-    sys.exit()
-
-if "-d" in sys.argv:
-    _DRYRUN = True
-
-if MISSING:
-    INST_GUI.warning(MISSING_MSG%", ".join(MISSING))
-    INST_GUI.waitmsg()
-    if not _DRYRUN:
+def main():                    #pylint: disable=R0912,R0915
+    'script eseguibile'
+    if '-h' in sys.argv:
+        print(__doc__)
         sys.exit()
 
-if os.path.exists(DESTDIR):
-    yesno = INST_GUI.askyesno(INSTALL_OVER)
-    if not yesno:
+    if "-d" in sys.argv:
+        GLOB.dryrun = True
+
+    if MISSING:
+        print(MISSING_MSG.format(", ".join(MISSING)))
         sys.exit()
 
-TREE = os.walk(ROOTDIR)
-for droot, dname, fnames in TREE:
-    INST_GUI.addtext(f"Copyng files from: {droot} -> {DESTDIR}")
-    PREF = len(droot)
-    for fname in fnames:
-        SRC = os.path.join(droot, fname)
-        DEST = os.path.join(DESTDIR, SRC[PREF:])
-        copyfile(SRC, DEST)
+    if os.path.exists(DESTDIR):
+        print(INSTALL_OVER.format(VERSDIR))
+        ans = input("Proseguo con l'installazione? ").strip().lower()[:1]
+        if ans not in 'ys':
+            sys.exit()
 
-PTH_FILE = make_pth(DESTDIR)
-INST_GUI.addtext(f"Creato file: {PTH_FILE}")
+    tree = os.walk(ROOTDIR)
+    for droot, _, fnames in tree:
+        print(f"Copia file: {droot} -> {DESTDIR}")
+        for fname in fnames:
+            src = os.path.join(droot, fname)
+            dest = os.path.join(DESTDIR, os.path.relpath(src, ROOTDIR))
+            copyfile(src, dest)
 
-if WINSHELL:
-    DESKTOP = winshell.desktop()                # genera link in Desktop
-    SHELL = Dispatch('WScript.Shell')
-    SHORTC = SHELL.CreateShortCut(os.path.join(DESKTOP, "OPC.lnk"))
-    SHORTC.Targetpath = PYTHONW
-    SHORTC.Arguments = OPCGUIPATH
-    SHORTC.WorkingDirectory = DESTDIR
-    SHORTC.IconLocation = OPCICON
-    SHORTC.save()
-    INST_GUI.addtext("Generato collegamento su Desktop")
-    LINKS.append(("OPC", OPCGUIPATH, OPCICON))
-    makelinks(DESTDIR, LINKS)
-INST_GUI.info(OK)
-INST_GUI.waitmsg()
+#   try:
+#       pth_file = makepth(DESTDIR)
+#   except Exception as exc:            #pylint: disable=W0703
+#       ret = f'Errore creazione file PTH: {exc}'
+#   else:
+#       ret = f'File PTH: {pth_file}'
+#   GLOB.gui.addtext(ret)
+
+    ret = makemainlink(VERSDIR)
+    print(ret)
+    ret = makeswitchlink(VERSDIR)
+    print(ret)
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception as excp:            #pylint: disable=W0703
+        print(excp)
+    else:
+        print(OK)
+    input('Premi <invio> per terminare')

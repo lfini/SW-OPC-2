@@ -2,8 +2,9 @@ Software per il controllo della cupola Gambato
 
 
 Luca Fini, dicembre 2022  (luca.fini@gmail.com)
+Aggiornato luglio 2024
 
-Descrizione fiiles:
+Descrizione files:
 
 alpaca_test.py     - Cliente per test della API alpaca implementata in dome_ctrl.py
 dome_calib.py      - Procedura per la misura dei parametri di calibrazione
@@ -17,7 +18,17 @@ dome_tools.py      - sottomodulo di dome_ctrl.py
 K8055D.dll         - DLL per scheda K8055 in windows. Versione: x64_v5.0.0.3
 k8055_simulator.py - simulatore di K8055 per tests in assenza di scheda K8055
 k8055_test.py      - procedura di test per scheda K8055
+libk8055.0.4.2.tgz - codice sorgente per la libreria K8055 versione Linux
+README             - questo file
 
+NOTA:
+=====
+
+E' necessario installare il driver per la scheda k8055. La versione Linux del driver è
+contenuta nel file libk8055.0.4.2.tgz all'interno del quale si trova il codice sorgente
+e le istruzioni di installazione.
+
+La versione Windows usa la dll K8055D.dll tramite ctypes
 
 NOTE SULLE SINGOLE PROCEDURE
 ============================

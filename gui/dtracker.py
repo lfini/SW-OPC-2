@@ -3,7 +3,7 @@
 OPC - GUI per controllo cupola - [Vers. {}]
 
 Uso per test:
-        python dtracker.py [-d] [-h] [-k] [-s] [-v]
+        python dtracker.py [-dDhkmpstv]
 
 Dove:
        -d  Attiva debug locale GUI
@@ -33,8 +33,8 @@ from opc import telsamp as ts
 import widgets as wg
 
 __author__ = 'Luca Fini'
-__version__ = '2.2'
-__date__ = 'Novembre 2023'
+__version__ = '2.3'
+__date__ = 'Luglio 2024'
 
 ENTRY_BG = '#808080'
 BACKGROUND = '#303030'
@@ -45,7 +45,7 @@ GREEN = '#33ff33'
 GRAY = '#808080'
 YELLOW = '#ffff80'
 BLACK = '#000000'
-BKG_SLAVE = '#a02020'
+BKG_SLAVE = '#501010'
 
 SW1_TEXT = 'Switch 1'
 SW2_TEXT = 'Switch 2'
@@ -157,7 +157,10 @@ class FocusButtons(MyFrame):                    # pylint: disable=R0901
     'Bottone per controllo fuoco'
     def __init__(self, parent, err_cb, **kw):
         super().__init__(parent)
-        self.usbrele = hid.device()             # pylint: disable=I1101
+        try:
+            self.usbrele = hid.device()
+        except:                                     #pylint: disable=W0702
+            self.usbrele = None
         bt1 = MyButton(self, text='Foc-', **kw)
         bt1.pack(side=tk.LEFT)
         bt1.bind('<ButtonRelease-1>', self.b1release)
@@ -168,7 +171,6 @@ class FocusButtons(MyFrame):                    # pylint: disable=R0901
         bt2.bind('<Button-1>', self.b2press)
         self.onrele0 = False
         self.onrele1 = False
-        self.imgood = False
         self.err_cb = err_cb
         self.usb_on()
 
@@ -182,7 +184,7 @@ class FocusButtons(MyFrame):                    # pylint: disable=R0901
 
     def b1press(self, *_unused):
         'callback per bottone 1 premuto'
-        if not self.imgood:
+        if self.usbrele is None:
             self.err_cb(NO_USB)
             return
         if not self.onrele0:
@@ -194,7 +196,7 @@ class FocusButtons(MyFrame):                    # pylint: disable=R0901
 
     def b1release(self, *_unused):
         'callback per bottone 1 rilasciato'
-        if not self.imgood:
+        if self.usbrele is None:
             return
         ret = self._write(OFF_CMD_2)
         if ret > 0:
@@ -204,7 +206,7 @@ class FocusButtons(MyFrame):                    # pylint: disable=R0901
 
     def b2press(self, *_unused):
         'callback per bottone 2 premuto'
-        if not self.imgood:
+        if self.usbrele is None:
             self.err_cb(NO_USB)
             return
         if not self.onrele1:
@@ -216,7 +218,7 @@ class FocusButtons(MyFrame):                    # pylint: disable=R0901
 
     def b2release(self, *_unused):
         'callback per bottone 2 rilasciato'
-        if not self.imgood:
+        if self.usbrele is None:
             return
         ret = self._write(OFF_CMD_1)
         if ret > 0:
@@ -226,6 +228,8 @@ class FocusButtons(MyFrame):                    # pylint: disable=R0901
 
     def usb_on(self):
         'Open communication with USB relé'
+        if self.usbrele is None:
+            return
         self.usbrele.close()
         try:
             self.usbrele.open(VENDOR, PRODUCT)
@@ -241,9 +245,10 @@ class FocusButtons(MyFrame):                    # pylint: disable=R0901
 
 class SetupPanel(tk.Frame):
     'Pannello per impostazioni'
-    def __init__(self, parent, config, dct, sav_cback, err_cback):     #pylint: disable=R0913
+    def __init__(self, parent, config, dct, cback):     #pylint: disable=R0913
         super().__init__(parent, bg=BACKGROUND, padx=5, pady=5)
         self.config = config
+        self.cback = cback
         self.dct = dct
         self.azh = self.dct.get_status().domeaz
         MyLabel(self, text='Impostazioni:',
@@ -263,34 +268,38 @@ class SetupPanel(tk.Frame):
         MyLabel(self, text='Salva posizione corrente: ').grid(row=4, column=1, sticky='e')
         sync_b = MyButton(self, text='Salva', command=self.save_pos)
         sync_b.grid(row=4, column=2)
-        self.err_cback = err_cback
-        self.sav_cback = sav_cback
+        exit_b = MyButton(self, text='Esci', command=lambda: self.cback('exit'))
+        exit_b.grid(row=5, column=5)
 
     def sync(self):
         'Sincronizza posizione cupola'
         sval = self.sync_e.get().strip()
         _debug(f'Sync dome at: {sval}')
         ret = self.dct.sync_to_azimuth(sval)
-        self.err_cback(ret)
+        self.cback('err', ret)
 
     def save_pos(self):
         'salva posizione corrente'
-        self.config['save_position'] = self.azh
         _debug(f'Save position: {self.azh}')
-        self.sav_cback()
+        self.cback('conf', self.azh)
 
     def set_park(self):
         'imposta posizione corrente come park'
         ret = self.dct.set_park()
         _debug('Set park')
-        self.err_cback(ret)
+        self.cback('err', ret)
 
 class _DTrackerBase(MyFrame):          # pylint: disable=R0901,R0902
     'Classe comune alle due versioni di GUI'
     VIRT_UNIMPL = 'Virtual method not implemented'
-    def __init__(self, parent, dct):
+    def __init__(self, parent, dct, error):
         super().__init__(parent)
         self.dct = dct
+        if error:
+            errtxt = tk.Text(self, bg=BACKGROUND, fg=YELLOW, width=40, padx=50)
+            errtxt.insert(tk.END, error)
+            errtxt.pack()
+            return
         wrapper = tk.Frame(self)
         self.main = MyFrame(wrapper, padx=5, pady=8)
         self.main.pack()
@@ -312,9 +321,12 @@ class _DTrackerBase(MyFrame):          # pylint: disable=R0901,R0902
             self.clrtime = 0
 
     def stop(self):
-        'interrompi movimento'
-        _debug('stop()')
-        ret = self.dct.stop()
+        'Interrompe movimento'
+        _debug('Ricevuto stop')
+        if self.dct:
+            ret = self.dct.stop()
+        else:
+            ret = 'Server cupola inattivo!'
         self.showerror(ret)
 
     def step(self, direct):
@@ -388,8 +400,10 @@ class _DTrackerBase(MyFrame):          # pylint: disable=R0901,R0902
 
 class DTracker(_DTrackerBase):                     # pylint: disable=R0901,R0902,R0904
     'Widget per asservimento cupola'
-    def __init__(self, parent, config, dct, tls):          # pylint: disable=R0915,R0914
-        super().__init__(parent, dct)
+    def __init__(self, parent, config, dct, tls, error=None):          # pylint: disable=R0915,R0914,R0913
+        super().__init__(parent, dct, error)
+        if error:
+            return
         self.config = config
         self.telsamp = tls
                                                       # Bottoni con icone
@@ -430,10 +444,11 @@ class DTracker(_DTrackerBase):                     # pylint: disable=R0901,R0902
         self.slew_b = MyButton(mid_fr, text='Vai a >', command=self.slewto)
         self.slew_b.pack(side=tk.LEFT)
         wg.ToolTip(self.slew_b, text='Vai ad azimuth impostato')
+        MyLabel(mid_fr, text=' ').pack(side=tk.LEFT, expand=1, fill=tk.X)
         self.slew_e = MyEntry(mid_fr, font=wg.H4_FONT, width=5)
         wg.ToolTip(self.slew_e, text='Imposta azimuth manualmente')
         self.slew_e.pack(side=tk.LEFT)
-        MyLabel(mid_fr, text=' ').pack(side=tk.LEFT, expand=1, fill=tk.X)
+        MyLabel(mid_fr, text='   ').pack(side=tk.LEFT, expand=1, fill=tk.X)
         self.lstep_b = MyButton(mid_fr, text='<', width=6, command=lambda: self.step('l'))
         self.lstep_b.pack(side=tk.LEFT)
         self.lmove_b = MyButton(mid_fr, text='<<', width=6, command=lambda: self.move('l'))
@@ -449,7 +464,6 @@ class DTracker(_DTrackerBase):                     # pylint: disable=R0901,R0902
         bot_fr = MyFrame(self.main)
         self.pos_b = MyButton(bot_fr, text='Vai a    ', width=12, command=self.goto_saved)
         self.pos_b.pack(side=tk.LEFT)
-        self.set_save()
         wg.ToolTip(self.pos_b, text='Muovi a posizione salvata')
 
         MySpacer(bot_fr, 4)
@@ -461,11 +475,13 @@ class DTracker(_DTrackerBase):                     # pylint: disable=R0901,R0902
         MyFrame(self.main, border=4,                      # linea di separazione
                 relief=tk.SUNKEN).grid(row=6, column=0,
                                        columnspan=5, sticky='we', ipady=1)
+        led_bg = tk.Label(self.main, text=' ', bg=BACKGROUND)
+        led_bg.grid(row=7, column=0, sticky=tk.W+tk.E+tk.N+tk.S)
         self.tel_led = wg.Led(self.main, size=24)
         self.tel_led.grid(row=7, column=0)
         tel_lab = MyLabel(self.main, text=' Telescopio  ', font=wg.H3_FONT)
         tel_lab.grid(row=7, column=1, ipady=10)
-        self.tel_ws = [tel_lab]
+        self.tel_ws = [led_bg, tel_lab]
                                                     # area centrale telescopio
         tel_fr = MyFrame(self.main)
         lab = MyLabel(tel_fr, text=' HA(h): ')
@@ -483,7 +499,7 @@ class DTracker(_DTrackerBase):                     # pylint: disable=R0901,R0902
         self.tel_ws.append(lab)
         self.tside = MyLabel(tel_fr, text='', width=3, bg='black', fg='lightgreen', font=wg.H4_FONT)
         self.tside.pack(side=tk.LEFT)
-        spa = MySpacer(tel_fr, 3)
+        spa = MySpacer(tel_fr, 5)
         self.tel_ws.append(spa)
         self.slave_b = MyButton(tel_fr, text='Slave', command=self.set_slave)
         self.slave_b.pack(side=tk.LEFT)
@@ -536,23 +552,17 @@ class DTracker(_DTrackerBase):                     # pylint: disable=R0901,R0902
         tk.Frame(self, bg=BACKGROUND).pack(expand=1, fill=tk.Y)  # spaziatore verticale
 
         self.setup_panel = SetupPanel(self.lower, self.config,
-                                      self.dct, self.set_cback, self.showerror)
+                                      self.dct, self.panel_cback)
         self.setup_panel.grid()
         self.setup_panel.grid_remove()
 
         self.moreinfo = tk.Text(self.lower, bg=BACKGROUND, width=100, fg=FRG_INFO, border=0)
-#       self.moreinfo.bind('<Button-1>', lambda *x: self.moreinfo.grid_remove)
+        self.moreinfo.bind('<Button-1>', lambda *x: self.clearinfo)
         self.moreinfo.grid(sticky=tk.W+tk.E)
         self.help('init.hlp')
+        self.imslave = False
         self.manual(True)
-        self.running = True
         self.update()
-
-    def stop(self):
-        'Gestione terminazione'
-        _debug('Ricevuto stop')
-        self.dct.stop_server()
-        self.running = False
 
     def update_always(self, stat):
         'execute at each update cycle'
@@ -613,13 +623,17 @@ class DTracker(_DTrackerBase):                     # pylint: disable=R0901,R0902
     def help(self, what):
         'Scrive aiuto nella zona di testo'
         filepath = os.path.join(MY_PATH, what)
-        self.moreinfo.delete(1.0, tk.END)
+        self.clearinfo()
         try:
             with open(filepath, encoding='utf8') as fin:
                 for line in fin:
                     self.moreinfo.insert(tk.END, '  '+line)
         except FileNotFoundError:
             self.showerror(f'file non trovato: {filepath}')
+
+    def clearinfo(self):
+        'Cancella testo in  area info'
+        self.moreinfo.delete(1.0, tk.END)
 
     def info(self):
         'Scrive informazioni nella zona di testo'
@@ -646,24 +660,28 @@ class DTracker(_DTrackerBase):                     # pylint: disable=R0901,R0902
         text.append(f'  Posizione salvata: {self.config["save_position"]:.1f}°')
         text.append(f'  Indirizzo IP telescopio: {self.config["tel_ip"]}:{self.config["tel_port"]}')
         text.append(f'  Directory dati: {self.config["local_store"]}')
-        self.moreinfo.delete(1.0, tk.END)
+        self.clearinfo()
         for line in text:
             self.moreinfo.insert(tk.END, '  '+line+'\n')
         self.setup_panel.grid_remove()
         self.moreinfo.grid()
 
-    def set_cback(self):
-        'Scrive valore posizione salvata'
-        self.set_save()
-        msg = utils.store_config(self.config)
-        self.showerror(msg)
-
-    def set_save(self):
-        'Scrive valore posizione salvata'
-        _debug(f'set_save(). Now: {self.config.get("save_position")}')
-        if 'save_position' not in self.config:
-            self.config['save_position'] = 90
-        self.pos_b.config(text=f'Vai a {self.config["save_position"]:.1f}° ')
+    def panel_cback(self, cmd, spec=''):
+        'Callback da SetupPanel'
+        if cmd == 'err':     # mostra errore
+            self.showerror(spec)
+            return
+        if cmd == 'conf':     # Salva file configurazione
+            self.config['save_position'] = spec
+            _debug(f'Saved pos. now: {self.config.get("save_position")}')
+            self.pos_b.config(text=f'Vai a {self.config["save_position"]:.1f}° ')
+            msg = utils.store_config(self.config)
+            self.showerror(msg)
+            return
+        if cmd == 'exit':     # Chiude pannello impostazioni
+            self.setup_panel.grid_remove()
+            self.moreinfo.grid(sticky=tk.W+tk.E)
+            self.clearinfo()
 
     def goto_saved(self):
         'Vai a posizione salvata'
@@ -712,7 +730,7 @@ class DTracker(_DTrackerBase):                     # pylint: disable=R0901,R0902
         for wdg in self.tel_ws:
             wdg.config(bg=bgr)
 
-    def set_slave(self, *_unused):
+    def set_slave(self):
         'attiva inseguimento telescopio'
         if not self.im_busy():
             ret = self.dct.set_slave()
@@ -724,8 +742,10 @@ class DTracker(_DTrackerBase):                     # pylint: disable=R0901,R0902
 
 class DTrackerMin(_DTrackerBase):          # pylint: disable=R0901,R0902
     'Widget minimale per controllo cupola'
-    def __init__(self, parent, dct):
-        super().__init__(parent, dct)
+    def __init__(self, parent, dct, error=None):
+        super().__init__(parent, dct, error)
+        if error:
+            return
         fr1 = MyFrame(self.main, padx=5, pady=8)
         MyLabel(fr1, text=' Azimuth (°) ', font=wg.H3_FONT).pack(side=tk.LEFT)
         self.dome_az_f = MyNumber(fr1, fmt='%.1f', width=6, font=wg.H3_FONT)
@@ -843,25 +863,19 @@ def main():                 #pylint: disable=R0915,R0912,R0914
                               sim_k8055=sim_k8055, language='it', debug=dcdebug)
     except Exception as exc:               # pylint: disable=W0703
         error = '\n\n'+str(exc)+'\n'
+        dct = None
     root.title(f'OPC - Controllo cupola - V. {__version__}{mode}')
-    if error:
-        wdg = wg.MessageText(root, error, bg=wg.ERROR_CLR)
-        wdg.pack()
-        root.mainloop()
-        if telsamp:
-            tls.tel_stop()
-        sys.exit()
     if minimized:
-        wdg = DTrackerMin(root, dct)
+        wdg = DTrackerMin(root, dct, error=error)
     else:
-        wdg = DTracker(root, config, dct, tls)
+        wdg = DTracker(root, config, dct, tls, error=error)
     wdg.pack()
     root.iconphoto(False, wg.get_icon('dome', 24))
     root.mainloop()
-    if telsamp:
+    if tls:
         tls.tel_stop()
-    tls.tel_stop()
-    dct.stop_server()
+    if dct:
+        dct.stop_server()
 
 if __name__ == '__main__':
     main()

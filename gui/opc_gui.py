@@ -27,7 +27,6 @@ from opc import utils
 from opc import dome_ctrl as dc
 from opc import telsamp as ts
 from opc.configure import MakeConfig
-#from opclogger import ObsInit, OpcLogger
 import dtracker as dt
 from hgui import HomerGUI
 import widgets as wg
@@ -46,26 +45,30 @@ class MyConfig(tk.Frame):
     'pannello per configurazione'
     def __init__(self, master):
         super().__init__(master, bg=dt.BACKGROUND)
-        self.cfg = MakeConfig(self)
-        self.cfg.pack(side=tk.LEFT)
-        tk.Button(self, text='REGISTRA', padx=10, pady=20,
-                  command=self.cfg.saveme).pack(side=tk.LEFT, anchor=tk.S)
+        intern = tk.Frame(self)
+        self.cfg = MakeConfig(intern)
+        self.cfg.pack()
+        tk.Button(intern, text='REGISTRA', padx=10, pady=20,
+                  command=self.cfg.saveme).pack(expand=1, fill=tk.X)
+        intern.pack()
+
+
 
 class MainPanel(ttk.Notebook):          #pylint: disable=R0901
     'Pannello principale'
-    def __init__(self, master, config, datadir, dct, tls):     #pylint: disable=R0913
+    def __init__(self, master, config, datadir, dct, tls, dcterror=None):     #pylint: disable=R0913
         _debug('MainPanel:')
         _debug(f'  config={pprint.pformat(config)}')
         _debug(f'  {datadir=})')
         super().__init__(master)
-        self.dtrk = dt.DTracker(self, config, dct, tls)
+        self.dtrk = dt.DTracker(self, config, dct, tls, dcterror)
         self.hgui = HomerGUI(self, config, datadir, simul=_GB.sim_tel, debug=_GB.debug)
         self.cfg = MyConfig(self)
         dummy = tk.Frame(self)
         self.add(self.dtrk, text='Cupola') #, sticky='nwe')
         self.add(self.hgui, text='Homer') #, sticky='nwe')
-        self.add(dummy, text='                                                         ',
-                 state=tk.DISABLED, sticky='nwe')
+        spacer = ' '*130
+        self.add(dummy, text=spacer, state=tk.DISABLED, sticky='nwe')
         self.add(self.cfg, text='Configura', sticky='nwe')
 
     def endpanel(self):
@@ -73,13 +76,13 @@ class MainPanel(ttk.Notebook):          #pylint: disable=R0901
         _debug('Ricevuto segnale terminazione')
         self.hgui.stop()
         self.dtrk.stop()
-        _debug('Inviato stop ai tre pannelli')
+        _debug('Inviato stop ai due pannelli')
         self.after(1000, self.endwait)
 
     def endwait(self):
         'Aspetta stop dei pannelli'
         _debug('attesa terminazione pannelli')
-        notyet = self.hgui.running or self.dtrk.running
+        notyet = self.hgui.running
         if notyet:
             self.after(1000, self.endwait)
         else:
@@ -151,25 +154,19 @@ def main():                 #pylint: disable=R0914,R0912,R0915
                               sim_k8055=sim_k8055, language='it', debug=dcdebug)
     except Exception as exc:               # pylint: disable=W0703
         error = '\n\n'+str(exc)+'\n'
-    if error:
-        text = error+'\n\n'
-        wdg = wg.MessageText(root, text, bg=wg.ERROR_CLR)
-        wdg.pack()
-        root.mainloop()
-        if tls:
-            tls.tel_stop()
-        _debug('Opc GUI terminata')
-        sys.exit()
+        dct = None
     datadir = config.get('local_store')
     style = ttk.Style()
     style.configure('TNotebook', background=dt.BACKGROUND)
-    wdg = MainPanel(root, config, datadir, dct, tls)
+    wdg = MainPanel(root, config, datadir, dct, tls, dcterror=error)
     wdg.pack()
     root.iconphoto(False, wg.get_icon('opclogo', 24))
     root.wm_protocol('WM_DELETE_WINDOW', wdg.endpanel)
     root.mainloop()
     if tls:
         tls.tel_stop()
+    if dct:
+        dct.stop_server()
     _debug('Opc GUI terminata')
 
 if __name__ == '__main__':

@@ -25,6 +25,8 @@ OPC_TEL_TMOUT = 0.8
 # ambiente
 
 HOMEDIR = os.path.expanduser("~")
+INSTALLROOT = os.path.join(HOMEDIR, "opc-sw")
+
 if sys.platform == "win32":
     DESKTOP = os.path.join(HOMEDIR, "Desktop")
     ASTAP_PATH = 'C:\\Program Files\\astap\\astap.exe'
