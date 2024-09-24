@@ -1,4 +1,4 @@
-VERSION = $(shell python opc/utils.py)
+VERSION = $(shell python3 opc/utils.py)
 
 PKG = opc_soft-$(VERSION).zip
 
@@ -12,6 +12,8 @@ upd:
 
 kit:
 	zip -r $(PKG) dome focus gui homer opc -x\*/__\*__/\* -x\*/.\* -x\*/\*.log -x\*/\*.bck -x\*/\*.json
-	zip -r $(PKG) astap/db astap/astap_cli.exe
+	zip -r $(PKG) astap/astap_cli.exe
 	zip $(PKG) setup.cmd README
 
+full: kit
+	zip -r $(PKG) astap/db

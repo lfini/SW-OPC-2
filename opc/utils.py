@@ -34,11 +34,12 @@ import opc.constants as const
 #__version__ = "1.03"   # Aggiunto invio file di log a www.lfini.cloud (da logger e dtracker)
 
 #__version__ = "2.0"   # Modificato tutto per unica applicazione di gestione osservazione
-__version__ = "2.1"    # Corretto bug che impediva di uscure dal modo "slave" di DTracker
-__date__ = "Luglio 2024"
-__author__ = 'Luca Fini'
+#__version__ = "2.1"    # Corretto bug che impediva di uscire dal modo "slave" di DTracker
 
-_CONFIG_PATH = os.path.join(const.HOMEDIR, const.CONFIG_FILENAME)
+__version__ = "2.2"    # Aggiubnte funzioni per lock
+
+__date__ = "Settembre 2024"
+__author__ = 'Luca Fini'
 
 SHOW_CONFIG = """
   File configurazione - {filename}
@@ -63,6 +64,35 @@ Ampiezza zona critica cupola [dome_critical]: {dome_critical:.1f} gradi
            Path programma ASTAP [astap_path]: {astap_path}
 """
 
+LOCK_TEMPLATE = '.opc_lock_{}'
+LOCK_START = '.opc_lock_'
+
+HOMEDIR = os.path.expanduser('~')
+
+def crealock(tag):
+    'crea directory come lock'
+    lockdir = os.path.join(HOMEDIR, LOCK_TEMPLATE.format(tag))
+    try:
+        os.mkdir(lockdir)
+    except FileExistsError:
+        return False
+    return True
+
+def _remlock_all():
+    'rimuove tutte le directory lock'
+    for fname in os.listdir(HOMEDIR):
+        if fname.startswith(LOCK_START):
+            lockdir = os.path.join(HOMEDIR, fname)
+            os.rmdir(lockdir)
+
+def remlock(tag):
+    'rimuove lock directory'
+    if tag == '*':
+        _remlock_all()
+        return
+    lockdir = os.path.join(HOMEDIR, LOCK_TEMPLATE.format(tag))
+    os.rmdir(lockdir)
+
 def get_version(long=False):
     "recupera versione, come stringa"
     if long:
@@ -74,13 +104,9 @@ class Config(UserDict):
     def __str__(self):
         return SHOW_CONFIG.format_map(self)
 
-def config_path():
-    'riporta il path completo del file di configurazione'
-    return _CONFIG_PATH
-
 def get_config(simul=False):
     "Legge il file di configurazione"
-    fname = _CONFIG_PATH
+    fname = const.CONFIG_PATH
     try:
         with open(fname, encoding='utf-8') as fpt:
             config = json.load(fpt)
@@ -94,7 +120,7 @@ def get_config(simul=False):
 def store_config(config):
     "Salva configurazione nel file relativo"
     try:
-        with open(config_path(), "w", encoding='utf-8') as fpt:
+        with open(const.CONFIG_PATH, "w", encoding='utf-8') as fpt:
             json.dump(config.data, fpt, indent=2)
     except Exception as excp:                   # pylint: disable=W0703
         msg_text = "\nErrore configurazione:\n\n   "+str(excp)+"\n"

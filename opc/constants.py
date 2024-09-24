@@ -5,8 +5,6 @@ Costanti per procedure di supporto osservazioni ad OPC
 import sys
 import os
 
-CONFIG_FILENAME = ".opc_config"
-
 REMOTE_DATADIR_ROOT = "Dati Oss. Chianti" # nome directory root per dati repository remoto
 LOCAL_DATADIR_ROOT = "opc-data"           # nome directory root per dati locale
 LOG_FILE = "Log_Sessione.txt"             # Nome file di log del logger generale
@@ -25,7 +23,7 @@ OPC_TEL_TMOUT = 0.8
 # ambiente
 
 HOMEDIR = os.path.expanduser("~")
-INSTALLROOT = os.path.join(HOMEDIR, "opc-sw")
+INSTALLROOT = os.path.join(HOMEDIR, "opc-soft")
 
 if sys.platform == "win32":
     DESKTOP = os.path.join(HOMEDIR, "Desktop")
@@ -33,7 +31,6 @@ if sys.platform == "win32":
 else:
     DESKTOP = HOMEDIR
     ASTAP_PATH = '/usr/local/bin/astap'
-LOCAL_STORE = os.path.join(DESKTOP, LOCAL_DATADIR_ROOT)
 
 # Parametri per cupola
 
@@ -42,3 +39,9 @@ DOME_ASCOM = "OCS.Dome"
 DOME_MAXERR = 0.5
 DOME_CRITICAL = 4.0
 DOME_90  = 90
+
+# nomi file di lavoro
+
+HOMER_COEFF_PATH = os.path.join(HOMEDIR, '.homer_coeff')
+CONFIG_PATH = os.path.join(HOMEDIR, ".opc_config")
+LOCAL_STORE = os.path.join(DESKTOP, LOCAL_DATADIR_ROOT)

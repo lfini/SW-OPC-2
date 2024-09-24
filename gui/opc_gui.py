@@ -18,6 +18,7 @@ import sys
 import getopt
 import os.path
 import pprint
+import atexit
 import tkinter as tk
 from tkinter import ttk
 
@@ -30,6 +31,15 @@ from opc.configure import MakeConfig
 import dtracker as dt
 from hgui import HomerGUI
 import widgets as wg
+
+LOCKTAG = 'GUI'
+LOCKFAILURE = '''
+
+   Sembra che ci sia un'altra applicazione OPC_GUI attiva   
+
+   Assicurati di averla chiusa prima di lanciarla di nuovo   
+
+'''
 
 class _GB:           # pylint: disable=R0903
     'globals senza usare global'
@@ -51,8 +61,6 @@ class MyConfig(tk.Frame):
         tk.Button(intern, text='REGISTRA', padx=10, pady=20,
                   command=self.cfg.saveme).pack(expand=1, fill=tk.X)
         intern.pack()
-
-
 
 class MainPanel(ttk.Notebook):          #pylint: disable=R0901
     'Pannello principale'
@@ -133,17 +141,16 @@ def main():                 #pylint: disable=R0914,R0912,R0915
         wdg.pack()
         root.mainloop()
         sys.exit()
+    root.title(f"Pannello controllo OPC - v. {utils.get_version()}")
+    if not utils.crealock(LOCKTAG):
+        wdg = wg.MessageText(root, LOCKFAILURE, bg=wg.ERROR_CLR)
+        wdg.pack()
+        root.mainloop()
+        sys.exit()
+    atexit.register(utils.remlock, LOCKTAG)
     logname = utils.make_logname('dome')
     logger = utils.set_logger(logname)
 
-    root.title(f"Pannello controllo OPC - v. {utils.get_version()}")
-#   starter = ObsInit(root, config)
-#   starter.grid()
-#   wg.set_position(root, (0.01, 0.01))
-#   root.wait_window(starter)
-#   _debug('fine primo passo')
-#   if not starter.valid:
-#       sys.exit()
     if tel_debug:
         tls = ts.tel_start(logger, _GB.sim_tel)
     else:

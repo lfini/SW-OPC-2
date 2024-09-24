@@ -23,8 +23,8 @@ from opc import utils
 from opc import astro
 from opc import constants as const
 
-__version__ = "1.10"
-__date__ = "gennaio 2024"
+__version__ = "1.11"
+__date__ = "agosto 2024"
 __author__ = "Luca Fini"
 
 NO_CONFIG = """
@@ -69,7 +69,7 @@ def store_config(config=None):
         msg = "Configurazione obsoleta non salvabile"
         return False, msg
     try:
-        with open(utils.config_path(), "w", encoding='utf-8') as fpt:
+        with open(const.CONFIG_PATH, "w", encoding='utf-8') as fpt:
             json.dump(config, fpt, indent=2)
     except Exception as excp:                   # pylint: disable=W0703
         msg = f'Excp: {excp}'
@@ -234,7 +234,7 @@ class MakeConfig(tk.Frame):                            # pylint: disable=R0902,R
         else:
             config = {"lat": rlat, "lon": rlon, "dome_ascom": dome_ascom,
                       "tel_ip": tel_ip, "tel_port": tel_port,
-                      "tel_tmout": tel_tmout, "filename": utils.config_path(),
+                      "tel_tmout": tel_tmout, "filename": const.CONFIG_PATH,
                       "dome_maxerr": dome_maxerr, "dome_critical": dome_crit,
                       "save_position": save_position,
                       "park_position": park_position,

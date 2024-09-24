@@ -48,7 +48,7 @@ L_SOLVED = os.path.join(BASE_DIR, 'astap', 'l_solved')
 
 class MyQueue:                            # pylint: disable=R0903
     "Emulazione Queue per test"
-    def put(self, what):                  # pylint: disable=R0201
+    def put(self, what):
         "Operazione put sulla coda"
         print("Q:", what)
 
@@ -61,6 +61,7 @@ class Transformer:                            #pylint: disable=R0903,R0902
         except Exception as exc:             #pylint: disable=W0703
             self.error = str(exc)
             return
+        self.calib_file = os.path.abspath(calib_file)
         self.cd_11 = calib['matrix'][0][0]
         self.cd_12 = calib['matrix'][0][1]
         self.cd_21 = calib['matrix'][1][0]
@@ -69,6 +70,8 @@ class Transformer:                            #pylint: disable=R0903,R0902
         self.imageh = calib['imageh']
         self.orient = calib['orient']
         self.scale = calib['scale']
+        self.ras_deg = calib['ras_deg']
+        self.dec_deg = calib['dec_deg']
         self.error = None
 
     def str_matrix(self):
@@ -94,6 +97,12 @@ class Transformer:                            #pylint: disable=R0903,R0902
         if self.error:
             return '--- error ---'
         return f'{self.orient:.4f}'
+
+    def str_pos(self):
+        'returns sky position as string'
+        if self.error:
+            return '--- error ---'
+        return f'{self.ras_deg:.6f} {self.dec_deg:.6f} (RA, DE) deg.'
 
     def transform(self, xpix, ypix):
         'calcola trasformazione pixel/WCS'

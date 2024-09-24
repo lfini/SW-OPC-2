@@ -14,12 +14,13 @@ Dove:
     aux_calib  File di calibrazione ausiliario
 """
 
-# La funzione guideloop() è strutturata per essere lanciata in un thread
-# La comunicazione con il programma chiamante avviene tramite l'oggeto Comm
+# La funzione guideloop() è strutturata per essere lanciata in un processo
+# La comunicazione con il programma chiamante avviene tramite la classe Comm
 
 import sys
 import os
 import time
+import json
 import signal
 import multiprocessing as mp
 from donuts import Donuts
@@ -27,6 +28,7 @@ from donuts import Donuts
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # pylint: disable=C0413
+from opc import constants as const
 from opc.utils import get_config
 from opc.telecomm import TeleCommunicator
 from homer.calibrate import Transformer
@@ -41,6 +43,32 @@ SCI_TILES = 32  # Numero di "tiles" da usare nell'inizializzazione
 AUX_TILES = 32  # ... e nell'immagine ausiliaria
 
 ASRATE = 15     # Conversione spostamento "pulse" da arcsec in secondi di durata
+NOMINAL_COEFF = 1000/ASRATE
+
+class MULT:                                # pylint: disable=R0903
+    "Coefficients for computation of movements"
+    ar_mult = 1.0
+    de_mult = 1.0
+
+def set_mult(ar_mult, de_mult):
+    'imposta coefficienti di conversione per durata "pulse"'
+    MULT.ar_mult = ar_mult
+    MULT.de_mult = de_mult
+    send('MULT', f'AR: {MULT.ar_mult},  DE: {MULT.de_mult}  [Nominal: {NOMINAL_COEFF}')
+
+def load_mult():
+    'carica coefficienti di conversione da file'
+    if os.path.exists(const.HOMER_COEFF_PATH):
+        with open(const.HOMER_COEFF_PATH, encoding='utf8') as f_in:
+            coeff = json.load(f_in)
+        set_mult(coeff['AR'], coeff['DE'])
+    else:
+        set_mult(1.0, 1.0)
+
+def save_mult():
+    'Salva coefficienti di conversione'
+    with open(const.HOMER_COEFF_PATH, 'w', encoding='utf8') as f_out:
+        json.dump({'AR': MULT.ar_mult, 'DE': MULT.de_mult}, f_out)
 
 class BidirectionalQueue:
     'Supporto per coda bidirezionale'
@@ -179,7 +207,7 @@ def adjust_tel(trans, xsh, ysh, ident):     #pylint: disable=R0914,R0912,R0915
         return False
                     # Ricentro il telescopio  in A.R.
     moved = False
-    duration = int(1000*ra_abs/ASRATE)
+    duration = int(ra_abs*MULT.ar_mult*NOMINAL_COEFF)
     if 20 < duration < 16399:
         if ra_shift <= 0:
             direct = "east"
@@ -200,7 +228,7 @@ def adjust_tel(trans, xsh, ysh, ident):     #pylint: disable=R0914,R0912,R0915
     else:
         send('LOG', f'[{ident}] Telescope not moved in RA. Pulse was: {duration}')
                     # Ricentro il telescopio  in DEC.
-    duration = int(1000*de_abs/ASRATE)
+    duration = int(de_abs*MULT.de_mult*NOMINAL_COEFF)
     if 20 < duration < 16399:
         if de_shift <= 0:
             direct = "north"
@@ -245,9 +273,9 @@ def guideloop(comm_serv, sci_dir, sci_calib, sci_tiles,      # pylint: disable=R
     sci_tiles : int
         numero tiles per valutazione background
     aux_dir : str
-        Directory per immagini ausiliarie (cercatore e smimili)
+        Directory per immagini ausiliarie (cercatore e simili)
     aux_calib : str
-        Immagine di calibrazione ausiliaria (cercatore e smimili)
+        Immagine di calibrazione ausiliaria (cercatore e simili)
     aux_tiles : int
         numero tiles per valutazione background
     simul : bool
@@ -282,10 +310,12 @@ def guideloop(comm_serv, sci_dir, sci_calib, sci_tiles,      # pylint: disable=R
     if sci_trans.error:
         send("ERR", f'[sci] invalid calibration file [{sci_trans.error}]')
         return
+    send('LOG', "[sci] Calib. file: "+sci_trans.calib_file)
     send('LOG', "[sci] Calib.matrix: "+sci_trans.str_matrix())
     send('LOG', "[sci] Image scale: "+sci_trans.str_scale())
     send('LOG', "[sci] Image size: "+sci_trans.str_size())
     send('LOG', "[sci] Image orient.: "+sci_trans.str_orient())
+    send('LOG', "[sci] Sky pos.: "+sci_trans.str_pos())
     _debug("Science calibration file OK")
     if aux_calib:
         aux_trans = Transformer(aux_calib)
@@ -405,6 +435,7 @@ def test():
         sys.exit()
 
     GLOB.debug = True
+    load_mult()
     print()
     print("Il test deve essere interrotto con CTRL-C")
     comm = Comm()

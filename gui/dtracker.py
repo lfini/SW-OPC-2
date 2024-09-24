@@ -296,11 +296,6 @@ class _DTrackerBase(MyFrame):          # pylint: disable=R0901,R0902
     def __init__(self, parent, dct, error):
         super().__init__(parent)
         self.dct = dct
-        if error:
-            errtxt = tk.Text(self, bg=BACKGROUND, fg=YELLOW, width=40, padx=50)
-            errtxt.insert(tk.END, error)
-            errtxt.pack()
-            return
         wrapper = tk.Frame(self)
         self.main = MyFrame(wrapper, padx=5, pady=8)
         self.main.pack()
@@ -311,6 +306,8 @@ class _DTrackerBase(MyFrame):          # pylint: disable=R0901,R0902
         self.stline.pack(expand=1, fill=tk.X)
         wrapper.pack()
         self.clrtime = 0
+        if error:
+            self.showerror(error)
 
     def showerror(self, msg=''):
         'scrive avviso errore'

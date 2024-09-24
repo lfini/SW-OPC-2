@@ -35,6 +35,7 @@ import widgets as wg
 #__version__ = "1.5"   # Corretto errore quando lo shift è negativo
 #__version__ = "1.6"   # Aggiunto log del tempo di ritardo dei comandi al telescopio
 #__version__ = "1.7"   # Corretto bug (errore formato log) che bloccava dopo la prima immagine
+#####
 
 __version__ = "2.0"   # Nuova versione con plate solving locale ed integrazione nella opc_gui
 
@@ -317,6 +318,8 @@ class HomerGUI(tk.Frame):                                   # pylint: disable=R0
         self.guider = None
         self.guiding = False
         self.running = True
+        guide.load_mult()
+        self.log.mark(f"Homer mult loaded  AR: {guide.MULT.ar_mult}, DE: {guide.MULT.de_mult}")
 
     def info(self):
         'Scrive informazioni in pannello pseudo-popup'
@@ -343,6 +346,8 @@ class HomerGUI(tk.Frame):                                   # pylint: disable=R0
         _debug('Ricevuto stop')
         self.dostop()
         self.running = False
+        guide.save_mult()
+        self.log.mark(f"Homer mult saved  AR: {guide.MULT.ar_mult}, DE: {guide.MULT.de_mult}")
         self.log.stop()
         _debug('Homer terminato')
 
@@ -469,7 +474,7 @@ class HomerGUI(tk.Frame):                                   # pylint: disable=R0
             self.guiding = False
 
     def startstop(self):
-        "Start guiding"
+        "Start/stop guiding"
         if self.start_button['text'] == "STOP":
             self.dostop()
             return
@@ -493,7 +498,6 @@ class HomerGUI(tk.Frame):                                   # pylint: disable=R0
         self.guider = mp.Process(target=guide.guideloop, args=guider_args)
         self.start_button.config(text="STOP")
         self.guider_listener()
-
         self.write('Homer Autoguiding starting')
         self.guiding = True
         self.guider.start()
@@ -639,7 +643,6 @@ def main():
     app = HomerGUI(_GB.root, _GB.config, basedir,  simul=simulation, debug=_GB.debug)
     _GB.root.protocol("WM_DELETE_WINDOW", lambda x=app: finish(app))
     app.pack()
-
     _debug("Homer GUI ready")
     _GB.root.mainloop()
 
