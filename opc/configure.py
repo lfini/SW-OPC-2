@@ -23,8 +23,8 @@ from opc import utils
 from opc import astro
 from opc import constants as const
 
-__version__ = "1.11"
-__date__ = "agosto 2024"
+__version__ = "1.12"
+__date__ = "settembre 2024"
 __author__ = "Luca Fini"
 
 NO_CONFIG = """
@@ -112,7 +112,7 @@ class MakeConfig(tk.Frame):                            # pylint: disable=R0902,R
     "Crea file di configurazione"
     def __init__(self, parent):   # pylint: disable=R0915,R0914
         tk.Frame.__init__(self, parent, padx=10, pady=10)
-        cur_conf = utils.get_config()
+        cur_conf = utils.get_config(check_version=False)
         tk.Label(self,
                  text="Latitudine osservatorio (rad): ").grid(row=4, column=0, sticky=tk.E)
         tk.Label(self,
@@ -254,7 +254,7 @@ def main():
         msg = __doc__ % (__version__, __author__, __date__)
         wdg1 = ShowMsg(root, msg)
     else:
-        config = utils.get_config()
+        config = utils.get_config(check_version=False)
         if "-s" in sys.argv:
             if config:
                 wdg1 = ShowMsg(root, str(config))

@@ -1,11 +1,13 @@
 '''
-alpaca_test.py - Cliente per prova API alpaca. L.Fini, gen. 2023
+alpaca_test.py - Cliente per prova API alpaca. L.Fini, sett. 2023
 
 Uso:
-    python test_alpaca.py [ip_addr]
+    python test_alpaca.py [-s] [ip_addr]
 
 Dove:
     ip_addr: indirizzo IP del server (default: localhost)
+
+    -s:      invia comando stop al server
 
 NOTA: Richiede l'installazione di "alpyca", modulo alpaca client per python
 '''
@@ -20,13 +22,14 @@ if '-h' in sys.argv:
     print(__doc__)
     sys.exit()
 
-try:
-    IP_ADDR = sys.argv[1]
-except IndexError:
+IP_ADDR = '-'
+if len(sys.argv) > 1:
+    IP_ADDR = sys.argv[-1]
+if IP_ADDR.startswith('-'):
     IP_ADDR = '127.0.0.1'
 
 PORT = 7777             # Valori eventualmente da modificare in accordo ai corrispondenti
-DEV_NUM = 0             # valori impostati in dome_ctrl.py
+DEV_NUM = 0             # valori impostati in dome_alpaca.py
 
 dome = ad.Dome(f'{IP_ADDR}:{PORT}', DEV_NUM)
 switch = sw.Switch(f'{IP_ADDR}:{PORT}', DEV_NUM)
@@ -48,11 +51,21 @@ def waitstop():
     time.sleep(1)
     print()
 
-dome.Connected = True
+try:
+    dome.Connected = True
+except Exception as exc:
+    print(f'Cannot connect to server ({str(exc)})')
+    sys.exit()
 print(f'Connected at {dome.Name}')
 print(dome.Description)
+if '-s' in sys.argv:
+    cmd = 'stop_server'
+    print(f'Action({cmd}) - returns:', dome.Action(cmd))
+    sys.exit()
+print('DriverInfo:', dome.DriverInfo)
 print()
 print('Capabilities for', dome.Name)
+print(' - SupportedActions:', dome.SupportedActions)
 print(' - CanFindHome:', dome.CanFindHome)
 print(' - CanPark:', dome.CanPark)
 print(' - CanSetAltitude:', dome.CanSetAltitude)
@@ -62,6 +75,8 @@ print(' - CanSetShutter:', dome.CanSetShutter)
 print(' - CanSlave:', dome.CanSlave)
 print(' - CanSyncAzimuth:', dome.CanSyncAzimuth)
 print()
+print('Get custom parameters')
+print('Params:', dome.Action('get_params'))
 print('Dome Status:')
 print()
 #print(' - Altitude:', dome.Altitude)
@@ -97,6 +112,9 @@ print(' - Switch Status')
 for nsw in range(1, switch.MaxSwitch+1):
     print(f'     Switch {nsw}:', switch.GetSwitch(nsw))
 print()
+answ = input('Proseguo con i test di movimento? ')[:1]
+if answ.lower() not in 'sy':
+    sys.exit()
 print('Testing some commands')
 print(' - Azimuth:', dome.Azimuth)
 print('SlewToAzimuth(37.2) - returns:', dome.SlewToAzimuth(37.2))

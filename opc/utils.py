@@ -14,6 +14,7 @@ import os
 import time
 import json
 import logging
+import subprocess
 from collections import UserDict
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -104,7 +105,7 @@ class Config(UserDict):
     def __str__(self):
         return SHOW_CONFIG.format_map(self)
 
-def get_config(simul=False):
+def get_config(check_version=True, simul=False):
     "Legge il file di configurazione"
     fname = const.CONFIG_PATH
     try:
@@ -115,6 +116,9 @@ def get_config(simul=False):
     if simul:
         config['tel_ip'] = const.DBG_TEL_IP
         config['tel_port'] = const.DBG_TEL_PORT
+
+    if check_version and config['version'] != const.CONFIG_VERSION:
+        raise RuntimeError('Configuration to be updated')
     return Config(config)
 
 def store_config(config):
@@ -148,6 +152,27 @@ def set_logger(filepath):
     logger.addHandler(fhndl)
     logger.filename = filepath
     return logger
+
+class ExecPythonScript:                 #pylint: disable=R0903
+    'Lancia programma python dato'
+    def __init__(self, script_path, options=None, bg=True):
+        if sys.platform == 'linux':
+            pythonpath = sys.executable
+            amp = ' &' if bg else ''
+        elif sys.platform == 'win32':
+            pythonpath = sys.executable
+            if bg:
+                pythonpath = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
+                amp = ''
+        else:
+            raise RuntimeError(f'platform {sys.platform} unsupported')
+        opt = ' '.join(str(x) for x in options)
+        self.command = f'{pythonpath} {script_path} {opt} {amp}'
+        self.process = None
+
+    def start(self):
+        'esegue comando dato'
+        self.process = subprocess.run(self.command, shell=True, check=False)#, capture_output=True)
 
 def installed_versions():
     'genera lista delle versioni installate'

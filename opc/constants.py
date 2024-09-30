@@ -5,6 +5,8 @@ Costanti per procedure di supporto osservazioni ad OPC
 import sys
 import os
 
+CONFIG_VERSION = 7
+
 REMOTE_DATADIR_ROOT = "Dati Oss. Chianti" # nome directory root per dati repository remoto
 LOCAL_DATADIR_ROOT = "opc-data"           # nome directory root per dati locale
 LOG_FILE = "Log_Sessione.txt"             # Nome file di log del logger generale
@@ -21,7 +23,6 @@ OPC_TEL_PORT = 9999
 OPC_TEL_TMOUT = 0.8
 
 # ambiente
-
 HOMEDIR = os.path.expanduser("~")
 INSTALLROOT = os.path.join(HOMEDIR, "opc-soft")
 

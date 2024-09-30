@@ -3,24 +3,24 @@
 OPC - GUI per controllo cupola - [Vers. {}]
 
 Uso per test:
-        python dtracker.py [-dDhkmpstv]
+        python dtracker.py [-dDhkmnpstv]
 
 Dove:
+       -c  mostra log su console (non crea file di log)
        -d  Attiva debug locale GUI
        -D  Attiva debug controller cupola
        -h  Mostra questa pagina ed esce
        -k  Usa simulatore di scheda k8055
        -m  Attiva GUI minima
-       -p  Alpaca port
        -s  Usa simulatore di telescopio
-       -t  Disabilita accesso telescopio (per test)
+       -t  Non attiva tel_sampler
        -v  Scrive numero di versione
 '''
 
 import sys
-import getopt
 import os.path
 import time
+import logging
 import tkinter as tk
 import hid
 
@@ -33,8 +33,8 @@ from opc import telsamp as ts
 import widgets as wg
 
 __author__ = 'Luca Fini'
-__version__ = '2.4'
-__date__ = 'Luglio 2024'
+__version__ = '2.5'
+__date__ = 'Settembre 2024'
 
 ENTRY_BG = '#808080'
 BACKGROUND = '#303030'
@@ -54,7 +54,7 @@ SW4_TEXT = 'Switch 4'
 
 NAN = float('nan')
 
-UPDATE_TIME = 300   # Intervallo (ms) refresh per widget
+UPDATE_TIME = 500   # Intervallo (ms) refresh per widget
 ERROR_TIME = 5     # persistenza messaggi errore (sec)
 
 HOMEDIR = os.path.expanduser('~')
@@ -74,10 +74,9 @@ NO_USB = 'USB relé non risponde'
 
 B_FONT = wg.H4_FONT
 
-class _GB:           # pylint: disable=R0903
+class GB:           # pylint: disable=R0903
     'globals senza usare global'
-    debug = False
-    logname = ''
+    logger = None
 
 DTRACKER_INFO = '''
   DTracker - GUI per controllo cupola OPC
@@ -87,11 +86,6 @@ DTRACKER_INFO = '''
   Logfile: %s
   ----------------------------------
   '''
-
-def _debug(*par):
-    'Scrivi linea dui debug'
-    if _GB.debug:
-        print('DTR DBG>', *par)
 
 class MyFrame(tk.Frame):                      #pylint: disable=R0901
     'versione colorabile di Frame'
@@ -274,26 +268,26 @@ class SetupPanel(tk.Frame):
     def sync(self):
         'Sincronizza posizione cupola'
         sval = self.sync_e.get().strip()
-        _debug(f'Sync dome at: {sval}')
+        GB.logger.debug('Sync dome at: %s', sval)
         ret = self.dct.sync_to_azimuth(sval)
         self.cback('err', ret)
 
     def save_pos(self):
         'salva posizione corrente'
         self.azh = self.dct.get_status().domeaz
-        _debug(f'Save position: {self.azh}')
+        GB.logger.debug('Save position: %f', self.azh)
         self.cback('conf', self.azh)
 
     def set_park(self):
         'imposta posizione corrente come park'
         ret = self.dct.set_park()
-        _debug('Set park')
+        GB.logger.debug('Set park')
         self.cback('err', ret)
 
 class _DTrackerBase(MyFrame):          # pylint: disable=R0901,R0902
     'Classe comune alle due versioni di GUI'
     VIRT_UNIMPL = 'Virtual method not implemented'
-    def __init__(self, parent, dct, error):
+    def __init__(self, parent, dct):
         super().__init__(parent)
         self.dct = dct
         wrapper = tk.Frame(self)
@@ -306,8 +300,6 @@ class _DTrackerBase(MyFrame):          # pylint: disable=R0901,R0902
         self.stline.pack(expand=1, fill=tk.X)
         wrapper.pack()
         self.clrtime = 0
-        if error:
-            self.showerror(error)
 
     def showerror(self, msg=''):
         'scrive avviso errore'
@@ -320,7 +312,7 @@ class _DTrackerBase(MyFrame):          # pylint: disable=R0901,R0902
 
     def stop(self):
         'Interrompe movimento'
-        _debug('Ricevuto stop')
+        GB.logger.debug('Ricevuto stop')
         if self.dct:
             ret = self.dct.stop()
         else:
@@ -329,7 +321,7 @@ class _DTrackerBase(MyFrame):          # pylint: disable=R0901,R0902
 
     def step(self, direct):
         'passo breve a sinistra/destra'
-        _debug(f'step({direct})')
+        GB.logger.debug('step(%s)', direct)
         if direct == 'l':
             ret = self.dct.step_left()
         else:
@@ -338,7 +330,7 @@ class _DTrackerBase(MyFrame):          # pylint: disable=R0901,R0902
 
     def move(self, direct):
         'movimento a sinistra/destra'
-        _debug(f'move({direct})')
+        GB.logger.debug('move(%s)', direct)
         if direct == 'l':
             ret = self.dct.start_left()
         else:
@@ -347,7 +339,7 @@ class _DTrackerBase(MyFrame):          # pylint: disable=R0901,R0902
 
     def portello(self, mode):
         'comando apri/chiudi portello'
-        _debug(f'portello({mode})')
+        GB.logger.debug('portello(%s)', mode)
         if mode == 'o':
             ret = self.dct.open_shutter()
         else:
@@ -398,10 +390,8 @@ class _DTrackerBase(MyFrame):          # pylint: disable=R0901,R0902
 
 class DTracker(_DTrackerBase):                     # pylint: disable=R0901,R0902,R0904
     'Widget per asservimento cupola'
-    def __init__(self, parent, config, dct, tls, error=None):          # pylint: disable=R0915,R0914,R0913
-        super().__init__(parent, dct, error)
-        if error:
-            return
+    def __init__(self, parent, config, dct, tls):          # pylint: disable=R0915,R0914,R0913
+        super().__init__(parent, dct)
         self.config = config
         self.telsamp = tls
                                                       # Bottoni con icone
@@ -460,7 +450,8 @@ class DTracker(_DTrackerBase):                     # pylint: disable=R0901,R0902
         mid_fr.grid(row=4, column=2, sticky='we', ipady=4)
 
         bot_fr = MyFrame(self.main)
-        self.pos_b = MyButton(bot_fr, text='Vai a    ', width=12, command=self.goto_saved)
+        vaia = f'Vai a {self.config["save_position"]:.1f}°'
+        self.pos_b = MyButton(bot_fr, text=vaia, width=12, command=self.goto_saved)
         self.pos_b.pack(side=tk.LEFT)
         wg.ToolTip(self.pos_b, text='Muovi a posizione salvata')
 
@@ -600,14 +591,14 @@ class DTracker(_DTrackerBase):                     # pylint: disable=R0901,R0902
 
     def slewto(self):
         'slew to azimuth'
-        _debug('slewto()')
+        GB.logger.debug('slewto()')
         azh = self.slew_e.get().strip()
         ret = self.dct.slew_to_azimuth(azh)
         self.showerror(ret)
 
     def sw_tog(self, nsw):
         'apre/chiude switch N. 0-3'
-        _debug(f'sw_tog({nsw})')
+        GB.logger.debug('sw_tog(%d)', nsw)
         self.sws[nsw] = not self.sws[nsw]
         ret = self.dct.switch(nsw, self.sws[nsw])
         self.showerror(ret)
@@ -644,7 +635,7 @@ class DTracker(_DTrackerBase):                     # pylint: disable=R0901,R0902
         text.append(ctrl_vers)
         text.append('')
         text.append('Parametri controller cupola:')
-        text.append(f'  Nome file di log: {params["logfile"]}')
+        text.append(f'  Nome file di log: {GB.logname}')
         text.append('  Asservimento telescopio: '+('OK' if params["canslave"] else 'NO'))
         text.append(f'  Errore posizione max.: {params["maxerr"]} (passi encoder)')
         text.append(f'  Passi encoder per giro: {params["n360"]}')
@@ -671,7 +662,7 @@ class DTracker(_DTrackerBase):                     # pylint: disable=R0901,R0902
             return
         if cmd == 'conf':     # Salva file configurazione
             self.config['save_position'] = spec
-            _debug(f'Saved pos. now: {self.config.get("save_position")}')
+            GB.logger.debug('Saved pos. now: %f', self.config.get("save_position"))
             self.pos_b.config(text=f'Vai a {self.config["save_position"]:.1f}° ')
             msg = utils.store_config(self.config)
             self.showerror(msg)
@@ -690,7 +681,7 @@ class DTracker(_DTrackerBase):                     # pylint: disable=R0901,R0902
 
     def manual(self, enable):
         'Abilita/disabilita tutti comandi manuali'
-        _debug(f'manual({enable})')
+        GB.logger.debug('manual(%d)', enable)
         if enable:
             self.lstep_b.config(state=tk.NORMAL)
             self.lmove_b.config(state=tk.NORMAL)
@@ -740,10 +731,8 @@ class DTracker(_DTrackerBase):                     # pylint: disable=R0901,R0902
 
 class DTrackerMin(_DTrackerBase):          # pylint: disable=R0901,R0902
     'Widget minimale per controllo cupola'
-    def __init__(self, parent, dct, error=None):
-        super().__init__(parent, dct, error)
-        if error:
-            return
+    def __init__(self, parent, dct):
+        super().__init__(parent, dct)
         fr1 = MyFrame(self.main, padx=5, pady=8)
         MyLabel(fr1, text=' Azimuth (°) ', font=wg.H3_FONT).pack(side=tk.LEFT)
         self.dome_az_f = MyNumber(fr1, fmt='%.1f', width=6, font=wg.H3_FONT)
@@ -809,39 +798,18 @@ def main():                 #pylint: disable=R0915,R0912,R0914
         wdg.pack()
         root.mainloop()
         sys.exit()
-    try:
-        opts, _unused = getopt.getopt(sys.argv[1:], 'Ddkmp:st')
-    except getopt.error:
-        print('Errore negli argomenti. Usa "-h" per aiuto')
-        sys.exit()
 
-    _GB.debug = False
-    dcdebug = False
+    console = '-c' in sys.argv
+    debug = '-d' in sys.argv
+    dcdebug = '-D' in sys.argv
     config = utils.get_config()
-    sim_k8055 = False
-    ipport = 0
-    mode = ''
-    sim_tel = False
-    telsamp = True
-    minimized = False
-    for opt, val in opts:
-        if opt == '-d':
-            _GB.debug = True
-        elif opt == '-D':
-            dcdebug = True
-        elif opt == '-p':
-            ipport = int(val)
-        elif opt == '-s':
-            sim_tel = True
-            config = utils.get_config(simul=True)
-            mode += ' [Sim. Tel.]'
-        elif opt == '-k':
-            mode += ' [Sim. K8055]'
-            sim_k8055 = True
-        elif opt == '-t':
-            telsamp = False
-        elif opt == '-m':
-            minimized = True
+    sim_k8055 = '-k' in sys.argv
+    sim_tel = '-s' in sys.argv
+    telsamp = '-t' not in sys.argv
+    minimized = '-m' in sys.argv
+    mode = ' [Sim. K8055]' if sim_k8055 else ''
+    if sim_tel:
+        config = utils.get_config(simul=True)
     root = tk.Tk()
     if not config:
         error = '\n\nErrore lettura del file di configurazione\n\n'
@@ -849,24 +817,35 @@ def main():                 #pylint: disable=R0915,R0912,R0914
         wdg.pack()
         root.mainloop()
         sys.exit()
-    logname = utils.make_logname('dome')
-    logger = utils.set_logger(logname)
+    loglevel = logging.DEBUG if debug else logging.INFO
+
+    if console:
+        GB.logname = ''
+        logging.basicConfig(level=loglevel)
+    else:
+        GB.logname = utils.make_logname('dome')
+        logging.basicConfig(filename=GB.logname, level=loglevel,
+                            format='%(asctime)s-%(levelname)s - %(message)s')
+    GB.logger = logging.getLogger('dtracker')
     if telsamp:
-        tls = ts.tel_start(logger, sim_tel)
+        tls = ts.tel_start(sim_tel)
     else:
         tls = None
     error = None
     try:
-        dct = dc.start_server(ipport=ipport, logger=logger, telsamp=tls,
+        dct = dc.start_server(logger=True, telsamp=tls,
                               sim_k8055=sim_k8055, language='it', debug=dcdebug)
     except Exception as exc:               # pylint: disable=W0703
         error = '\n\n'+str(exc)+'\n'
-        dct = None
+        wdg = wg.MessageText(root, error, bg=wg.ERROR_CLR)
+        wdg.pack()
+        root.mainloop()
+        sys.exit()
     root.title(f'OPC - Controllo cupola - V. {__version__}{mode}')
     if minimized:
-        wdg = DTrackerMin(root, dct, error=error)
+        wdg = DTrackerMin(root, dct)
     else:
-        wdg = DTracker(root, config, dct, tls, error=error)
+        wdg = DTracker(root, config, dct, tls)
     wdg.pack()
     root.iconphoto(False, wg.get_icon('dome', 24))
     root.mainloop()
