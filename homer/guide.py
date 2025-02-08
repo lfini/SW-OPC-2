@@ -182,7 +182,7 @@ def init_donuts(image_file, ntiles, ident):
     send('LOG', f'[{ident}] Init. donuts on image: {image_file} (ntiles={ntiles})')
     try:
         donuts = Donuts(refimage=image_file, image_ext=0, overscan_width=20, prescan_width=20,
-                        border=64, normalise=True,
+                        border=64, normalise=True, downweight_edges=False,
                         exposure='EXPOSURE', subtract_bkg=True, ntiles=ntiles)
     except Exception as excp:            # pylint: disable=W0703
         if GLOB.debug:

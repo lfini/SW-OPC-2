@@ -48,8 +48,13 @@ L_SOLVED = os.path.join(BASE_DIR, 'astap', 'l_solved')
 
 class MyQueue:                            # pylint: disable=R0903
     "Emulazione Queue per test"
+    def __init__(self, silent=False):
+        self.silent = silent
+
     def put(self, what):
         "Operazione put sulla coda"
+        if self.silent:
+            return
         print("Q:", what)
 
 class Transformer:                            #pylint: disable=R0903,R0902
@@ -144,9 +149,14 @@ def calibrate_astap(impath, outq):   #nopylint: disable=R0914,R0913
     time0 = time.time()
     try:
         subprocess.run(command, timeout=PSOLV_TIMEOUT, check=True)
+    except subprocess.CalledProcessError as exc:
+        elaps = time.time()-time0
+        outq.put(('LOG', f'Solver CalledProcessError exception after {elaps:.3f} sec'))
+        outq.put(('LOG', f'EXC.STDOUT: {exc.stdout}'))
+        outq.put(('LOG', f'EXC.STDERR: {exc.stderr}'))
     except Exception as exc:                               #pylint: disable=W0703
         elaps = time.time()-time0
-        outq.put(('LOG', f'Solver exception: {str(exc)} after {elaps:.3f} sec'))
+        outq.put(('LOG', f'Solver generic exception: {str(exc)} after {elaps:.3f} sec'))
     else:
         elaps = time.time()-time0
     parsed = None
@@ -157,6 +167,10 @@ def calibrate_astap(impath, outq):   #nopylint: disable=R0914,R0913
             parsed = parse(inipath)
         except Exception as exc:       # pylint: disable=W0703
             outq.put(('LOG', f'Exception parsing solution: {str(exc)}'))
+            outq.put(('LOG', 'Output file content:'))
+            with open(inipath, mode='rb') as f_in:
+                for line in f_in:
+                    outq.put('LOG', ' - '+str(line).rstrip())
     else:
         outq.put(('LOG', 'Error: ASTAP output file not found'))
     return parsed

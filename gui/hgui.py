@@ -3,10 +3,11 @@ hgui.py  Autoguider from scientific images [Vers. {}]
 
 Usage:
 
-    python3 hgui.py [-v] [-d] [-s]
+    python3 hgui.py [-v] [-c] [-d] [-s]
 
 Where:
     -v     Show version and exit
+    -c     console mode: write log and errors to console (do no create a log file)
     -d     Set debug mode
     -s     Start in simulation mode
 """
@@ -15,6 +16,7 @@ import sys
 import os
 import time
 import pprint
+import logging
 import multiprocessing as mp
 import tkinter as tk
 from tkinter import filedialog
@@ -26,8 +28,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # pylint: disable=C0413
-from opc.utils import get_config
-from opc.logfile import Logger
+from opc.utils import get_config, make_logname
 from homer.calibrate import calibrate
 from homer import guide
 import widgets as wg
@@ -35,12 +36,15 @@ import widgets as wg
 #__version__ = "1.5"   # Corretto errore quando lo shift è negativo
 #__version__ = "1.6"   # Aggiunto log del tempo di ritardo dei comandi al telescopio
 #__version__ = "1.7"   # Corretto bug (errore formato log) che bloccava dopo la prima immagine
+#__version__ = "2.0"   # Nuova versione con plate solving locale ed integrazione nella opc_gui
+#__version__ = "2.1"   # Versione nuovamente standalone
+#__version__ = "2.2"   # Versione installata ad OPC
 #####
 
-__version__ = "2.0"   # Nuova versione con plate solving locale ed integrazione nella opc_gui
+__version__ = "2.3"   # Aggiunte nuove informazioni al log file
 
 __author__ = "L. Naponiello, L. Fini"
-__date__ = "Novembre 2023"
+__date__ = "Febbraio 2025"
 
 TEST_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "__work__"))
 
@@ -91,16 +95,11 @@ AUX_CALIB_DATA_NAME = "aux_calib.json"    # Name of calibration data file
 
 SCI_TILES = 32  # Number of tiles for Donuts (scientific image)
 
-class _GB:                                # pylint: disable=R0903
+class GB:                                # pylint: disable=R0903
     "Some global variables without global"
     debug = False
     config = {}
     root = None
-
-def _debug(txt):
-    "Show debug lines"
-    if _GB.debug:
-        print("HGUI DBG>", txt)
 
 def remove(fname):
     "Rimuove file"
@@ -127,7 +126,7 @@ def browse_folder(idir, title):
     ret = filedialog.askdirectory(title=title, initialdir=idir)
     if not ret:
         ret = ""
-    _debug(f'Selected folder: {ret}')
+    GB.logger.info('Selected folder: %s', ret)
     return ret
 
 def browse_file(idir, title, filt='fits'):
@@ -141,11 +140,11 @@ def browse_file(idir, title, filt='fits'):
                 ("All files", "*.*"))
     else:
         ffilt = ()
-    _debug(f'Filter: {filt}: {ffilt}')
+    GB.logger.debug('Filter: %s: %s', filt, str(ffilt))
     filepath = filedialog.askopenfilename(title=title, filetypes=ffilt, initialdir=idir)
     if not filepath:
         filepath = ''
-    _debug(f'Selected file: {filepath}')
+    GB.logger.debug('Selected file: %s', filepath)
     return filepath
 
 def cart2pol(xxx, yyy):
@@ -158,15 +157,13 @@ def cart2pol(xxx, yyy):
 
 class HomerGUI(tk.Frame):                                   # pylint: disable=R0901,R0902
     "GUI for Homer guiding app"
-    def __init__(self, master, config, datadir, simul=False, debug=False):    # pylint: disable=R0915,R0914,R0913
+    def __init__(self, master, config, datadir, simul=False):    # pylint: disable=R0915,R0914,R0913
         super().__init__(master, bg=DEF_BG, padx=10, pady=5)
         self.config = config
         datadir = os.path.abspath(datadir)
-        if debug:
-            _GB.debug = debug
-            pcfg = 'Config: '+pprint.pformat(self.config)
-            _debug(pcfg)
-            _debug(f'datadir: {datadir}')
+        pcfg = 'Config: '+pprint.pformat(self.config)
+        GB.logger.info(pcfg)
+        GB.logger.info('datadir: %s', datadir)
         self.arcsec_rate = 15
         self.donuts = None
         self.science_path = None
@@ -175,8 +172,6 @@ class HomerGUI(tk.Frame):                                   # pylint: disable=R0
         self.tel = None
         self.simul = simul
         self._goon = False
-        self.log = Logger(datadir, 'homer')
-        self.log.mark(f"Homer {__version__} started ---------")
         self.dir_root = datadir
         self.sci_dir = None
         self.aux_dir = None
@@ -319,7 +314,7 @@ class HomerGUI(tk.Frame):                                   # pylint: disable=R0
         self.guiding = False
         self.running = True
         guide.load_mult()
-        self.log.mark(f"Homer mult loaded  AR: {guide.MULT.ar_mult}, DE: {guide.MULT.de_mult}")
+        GB.logger.info("Homer mult loaded  AR: %f, DE: %f", guide.MULT.ar_mult, guide.MULT.de_mult)
 
     def info(self):
         'Scrive informazioni in pannello pseudo-popup'
@@ -327,7 +322,7 @@ class HomerGUI(tk.Frame):                                   # pylint: disable=R0
         msg.append(f'datadir: {self.dir_root}')
         msg.append(f'sci. images dir: {self.sci_dir}')
         msg.append(f'aux. images dir: {self.aux_dir}')
-        msg.append(f'Logfile: {self.log.logname}')
+        msg.append(f'Logfile: {GB.logname}')
         msgw = wg.PopupText(self, '\n'.join(msg), border=2, relief=tk.RIDGE,
                          padx=10, pady=10, fg=INFO_FG, bg=INFO_BG)
         msgw.place(in_=self.frame3, relx=0.5, rely=0.5, anchor='center')
@@ -335,7 +330,7 @@ class HomerGUI(tk.Frame):                                   # pylint: disable=R0
 
     def error_msg(self, msg):
         'show error message'
-        _debug('called error_msg()')
+        GB.logger.debug('called error_msg()')
         errw = wg.PopupText(self, msg, ERR_LIFE, border=2, relief=tk.RIDGE,
                          padx=10, pady=10, fg=ERR_FG, bg=ERR_BG)
         errw.place(in_=self.frame3, relx=0.5, rely=0.5, anchor='center')
@@ -343,13 +338,12 @@ class HomerGUI(tk.Frame):                                   # pylint: disable=R0
 
     def stop(self):
         'Gestione terminazione'
-        _debug('Ricevuto stop')
+        GB.logger.info('Ricevuto stop')
         self.dostop()
         self.running = False
         guide.save_mult()
-        self.log.mark(f"Homer mult saved  AR: {guide.MULT.ar_mult}, DE: {guide.MULT.de_mult}")
-        self.log.stop()
-        _debug('Homer terminato')
+        GB.logger.info("Homer mult saved  AR: %f, DE: %f", guide.MULT.ar_mult, guide.MULT.de_mult)
+        GB.logger.info('Homer terminato')
 
     def chg_mode(self):
         'Toggle solving mode'
@@ -402,18 +396,20 @@ class HomerGUI(tk.Frame):                                   # pylint: disable=R0
             self.aux_calib_f.config(text=CLICK_FF)
             self.write("Aux calibration file not set")
 
-    def write(self, words):
+    def write(self, msg, error=False):
         "Add line to log window"
-#       _debug("write: "+words)
-        self.log.mark(words)
+        if error:
+            GB.logger.error(msg)
+        else:
+            GB.logger.info(msg)
         self.text_box.config(state=tk.NORMAL)
-        self.text_box.insert("end", words+"\n")
+        self.text_box.insert("end", msg+"\n")
         self.text_box.see("end")
         self.text_box.config(state=tk.DISABLED)
 
     def clear_text_box(self):
         "Clear log window"
-        yesorno = wg.YesNo(self, YOU_SURE%self.log.logname, position="c")
+        yesorno = wg.YesNo(self, YOU_SURE%GB.logname, position="c")
         self.wait_window(yesorno)
         if yesorno.status:
             self.text_box.config(state=tk.NORMAL)
@@ -437,7 +433,7 @@ class HomerGUI(tk.Frame):                                   # pylint: disable=R0
         "Listen to guider queue for interactions"
         if not self.comm.empty():
             cmd, data = self.comm.get()
-            _debug(f"from guider: {cmd} - {str(data)}")
+            GB.logger.debug("from guider: %s - %s", cmd, str(data))
             if cmd == "LOG":
                 self.write(str(data))
             elif cmd == "TERM":
@@ -448,7 +444,7 @@ class HomerGUI(tk.Frame):                                   # pylint: disable=R0
             if cmd == "ERR":
                 self.guider.join()
                 errmsg = f'Guiding error: {data}'
-                self.write(errmsg)
+                self.write(errmsg, error=True)
                 self.error_msg(errmsg)
                 self.start_button.config(text="START")
                 return
@@ -494,7 +490,7 @@ class HomerGUI(tk.Frame):                                   # pylint: disable=R0
         guider_args = (self.serverq, self.sci_dir,
                        self.sci_calib_file, sci_tiles,
                        self.aux_dir, self.aux_calib_file,
-                       aux_tiles, self.simul, _GB.debug)
+                       aux_tiles, self.simul, GB.debug)
         self.guider = mp.Process(target=guide.guideloop, args=guider_args)
         self.start_button.config(text="STOP")
         self.guider_listener()
@@ -525,7 +521,7 @@ class HomerGUI(tk.Frame):                                   # pylint: disable=R0
         while self._goon:
             if not aqueue.empty():
                 cmd, value = aqueue.get()
-                _debug(f"QUEUE ({str(cmd)}, {str(value)})")
+                GB.logger.debug("QUEUE (%s, %s)", str(cmd), str(value))
                 if cmd == "LOG":
                     self.write(value)
                 elif cmd == 'TMO':
@@ -535,7 +531,7 @@ class HomerGUI(tk.Frame):                                   # pylint: disable=R0
                 elif cmd == "ERR":
                     err = 'Calibration error: '+value
                     self.error_msg(err)
-                    self.write(err)
+                    self.write(err, error=True)
                     self.write('Calibration file not saved')
                     remove(out_file)
                     progr.kill()
@@ -550,11 +546,11 @@ class HomerGUI(tk.Frame):                                   # pylint: disable=R0
         progr.kill()
         if out_file:
             if what == 'sci':
-                _debug(f'New sci. calib file {out_file}')
+                GB.logger.info('New sci. calib file %s', out_file)
                 self.sci_calib_file = out_file
                 self.sci_calib_f.config(text=out_file)
             else:
-                _debug(f'New aux. calib file {out_file}')
+                GB.logger.info('New aux. calib file %s', out_file)
                 self.aux_calib_file = out_file
                 self.aux_calib_f.config(text=out_file)
         else:
@@ -593,7 +589,7 @@ class HomerGUI(tk.Frame):                                   # pylint: disable=R0
 def finish(app):
     "Terminate app"
     app.stop()
-    _GB.root.destroy()
+    GB.root.destroy()
 
 def main():
     "Lancia la GUI"
@@ -608,43 +604,48 @@ def main():
         print(__version__)
         sys.exit()
 
-    if "-d" in sys.argv:
-        _GB.debug = True
-        guide.set_debug(True)
-        wg.set_debug(True)
-
+    debug = '-d' in sys.argv
     simulation = "-s" in sys.argv
+    console = '-c' in sys.argv
 
-    _GB.root = tk.Tk()
-    _GB.config = get_config()
+    GB.root = tk.Tk()
+    GB.config = get_config()
 
-    if not _GB.config:
-        info = wg.WarningMsg(_GB.root, NO_CONFIG, title="Homer")
-#       config.store_config()
-        _GB.root.withdraw()
-        _GB.root.wait_window(info)
+    if not GB.config:
+        info = wg.MessageText(GB.root, NO_CONFIG, bg=wg.ERROR_CLR)
+        info.pack()
+        GB.root.mainloop()
         sys.exit()
 
-    _debug("Homer GUI starting")
+    loglevel = logging.DEBUG if debug else logging.INFO
+    if console:
+        GB.logname = ''
+        logging.basicConfig(level=loglevel)
+    else:
+        GB.logname = make_logname('dome')
+        logging.basicConfig(filename=GB.logname, level=loglevel,
+                            format='%(asctime)s-%(levelname)s - %(message)s')
+    GB.logger = logging.getLogger('homer_gui')
+    GB.logger.info("Homer %s started ---------", __version__)
     if simulation:
         basedir = '__work__'
         mode = " [Simulation]"
     else:
-        basedir = _GB.config['local_store']
+        basedir = GB.config['local_store']
         mode = ""
     if not os.path.exists(basedir):
         os.makedirs(basedir)
 
-    _GB.root.title("Homer GUIding v. "+__version__+mode)
-    _GB.root.configure(bg=DEF_BG)
+    GB.root.title("Homer GUIding v. "+__version__+mode)
+    GB.root.configure(bg=DEF_BG)
 
-    _GB.root.iconphoto(False, wg.get_icon("homer", 32))
+    GB.root.iconphoto(False, wg.get_icon("homer", 32))
 
-    app = HomerGUI(_GB.root, _GB.config, basedir,  simul=simulation, debug=_GB.debug)
-    _GB.root.protocol("WM_DELETE_WINDOW", lambda x=app: finish(app))
+    app = HomerGUI(GB.root, GB.config, basedir,  simul=simulation)
+    GB.root.protocol("WM_DELETE_WINDOW", lambda x=app: finish(app))
     app.pack()
-    _debug("Homer GUI ready")
-    _GB.root.mainloop()
+    GB.logger.info("Homer GUI ready")
+    GB.root.mainloop()
 
 if __name__ == "__main__":
     main()

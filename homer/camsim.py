@@ -2,11 +2,10 @@
 camsim.py - Simulatore di camera per tests di homer
 
 Il programma genera versioni shiftate di un'immagine originale per simulare
-l'acquisizione di dati con drift del telescopio. Il programma continua a
-generare immagini fino a che non viene fermato con CTRL-C
+l'acquisizione di dati con drift del telescopio.
 
 uso:
-     python camsim.py [-d to_dir] [-i interval] [-x x_max] [-y y_max] cal_image
+     python camsim.py [-cnrw] [-d to_dir] [-i interval] [-s scal] [-x x_max] [-y y_max] cal_image
 
      python camsim.py -c [-d to_dir]
 
@@ -21,7 +20,15 @@ dove:
 
      -c          Cancella files generati dalla directory destinazione
 
-     -s          Genera un file FITS con immagine scalata della percentuale data
+     -n          Si arresta dopo aver generato n immagini. Se non specificato continua
+                 a generare immagini e può essere arrestato con CTRL-C
+
+     -r          Genera immagini con shift random in [-xy_max, xy_max]
+                 Altrimenti usa x_max, y_max come incrementi costanti
+
+     -s scal     Genera un file FITS con immagine scalata della percentuale data
+
+     -w          Genera la prima immagine, poi aspetta invio per iniziare il loop
 
 """
 
@@ -70,7 +77,7 @@ def doscale(infile, percent):
     xdim = int(xdim*scale+1)
     ydim = int(ydim*scale+1)
     img = Image.fromarray(data0)
-    simg = img.resize((xdim, ydim), resample=Image.NEAREST)
+    simg = img.resize((xdim, ydim), resample=Image.Resampling.NEAREST)
     hdu = fits.PrimaryHDU(np.array(simg))
     del hd0['NAXIS1']
     del hd0['NAXIS2']
@@ -81,12 +88,13 @@ def doscale(infile, percent):
 
 class Shifter:                           #pylint: disable=R0902,R0903
     'generatore di immagini shiftate'
-    def __init__(self, imgdir, origfile, x_max, y_max):
+    def __init__(self, imgdir, origfile, x_max, y_max, rand=False):    #pylint: disable=R0913
         self.imgtempl = os.path.join(imgdir, 'img_')+'{0:03d}.fit'
         self.img0, self.hd0 = fits.getdata(origfile, header=True)
         self.x_max = x_max
         self.y_max = y_max
         self.imgnum = 0
+        self.rand = rand
         logname = os.path.join(imgdir, 'camsim.log')
         self.x_size = self.img0.shape[1]-2*self.x_max-1
         self.y_size = self.img0.shape[0]-2*self.y_max-1
@@ -101,9 +109,9 @@ class Shifter:                           #pylint: disable=R0902,R0903
         newimg = self.img0[yofs:yofs+self.y_size, xofs:xofs+self.x_size]
         imgpath = self.imgtempl.format(self.imgnum)
         hdu = fits.PrimaryHDU(newimg)
-        del self.hd0['NAXIS1']
-        del self.hd0['NAXIS2']
-        hdu.header.update(self.hd0)
+#       del self.hd0['NAXIS1']
+#       del self.hd0['NAXIS2']
+#       hdu.header.update(self.hd0)
         hdu.writeto(imgpath)
         log = f' {imgpath} - XY shift: ({xsh}, {ysh})'
         print(time.strftime('%Y-%m-%d %H:%M:%S'), log, file=self.logfile)
@@ -112,8 +120,12 @@ class Shifter:                           #pylint: disable=R0902,R0903
 
     def new(self):
         'genera immagine con shift casuale'
-        xsh = random.randrange(-self.x_max, self.x_max+1)
-        ysh = random.randrange(-self.y_max, self.y_max+1)
+        if self.rand:
+            xsh = random.randrange(-self.x_max, self.x_max+1)
+            ysh = random.randrange(-self.y_max, self.y_max+1)
+        else:
+            xsh = self.x_max
+            ysh = self.y_max
         self._make(xsh, ysh)
 
 ARGERR = 'Errore argomenti. Usa "-h" per informazioni'
@@ -125,7 +137,7 @@ def main():                        #pylint: disable=R0912,R0915,R0914
         sys.exit()
 
     try:
-        opts, args = getopt.getopt(sys.argv[1:], 'cd:i:s:x:y:')
+        opts, args = getopt.getopt(sys.argv[1:], 'cnrwd:i:s:x:y:')
     except getopt.error:
         print(ARGERR)
         sys.exit()
@@ -136,6 +148,9 @@ def main():                        #pylint: disable=R0912,R0915,R0914
     y_max = 5
     cancella = False
     scale = None
+    israndom = False
+    nmax = 1000000
+    mustwait = False
 
     for opt, val in opts:
         if opt == '-d':
@@ -148,6 +163,12 @@ def main():                        #pylint: disable=R0912,R0915,R0914
             y_max = abs(int(val))
         elif opt == '-c':
             cancella = True
+        elif opt == '-n':
+            nmax = int(val)
+        elif opt == '-r':
+            israndom = True
+        elif opt == '-w':
+            mustwait = True
         elif opt == '-s':
             scale = abs(float(val))
 
@@ -169,9 +190,14 @@ def main():                        #pylint: disable=R0912,R0915,R0914
 
     signal.signal(2, sghandler)
 
-    shifter = Shifter(destdir, imgfile, x_max, y_max)
+    shifter = Shifter(destdir, imgfile, x_max, y_max, rand=israndom)
     smalld = 0.5
+    if mustwait:
+        input('Premi <invio> per iniziare')
     while True:
+        if not nmax:
+            break
+        nmax -= 1
         wait = int(delay/smalld)
         while wait:
             wait -= 1

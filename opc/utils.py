@@ -118,7 +118,8 @@ def get_config(check_version=True, simul=False):
         config['tel_port'] = const.DBG_TEL_PORT
 
     if check_version and config['version'] != const.CONFIG_VERSION:
-        raise RuntimeError('Configuration to be updated')
+        raise RuntimeError('Configuration to be updated ' \
+                           f'(required: {config["version"]}, got: {const.CONFIG_VERSION})')
     return Config(config)
 
 def store_config(config):
