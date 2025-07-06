@@ -170,7 +170,7 @@ def calibrate_astap(impath, outq):   #nopylint: disable=R0914,R0913
             outq.put(('LOG', 'Output file content:'))
             with open(inipath, mode='rb') as f_in:
                 for line in f_in:
-                    outq.put('LOG', ' - '+str(line).rstrip())
+                    outq.put(('LOG', ' - '+str(line).rstrip()))
     else:
         outq.put(('LOG', 'Error: ASTAP output file not found'))
     return parsed

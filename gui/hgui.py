@@ -434,21 +434,21 @@ class HomerGUI(tk.Frame):                                   # pylint: disable=R0
         if not self.comm.empty():
             cmd, data = self.comm.get()
             GB.logger.debug("from guider: %s - %s", cmd, str(data))
-            if cmd == "LOG":
+            if cmd == "LOG":       # aggiunge line al log
                 self.write(str(data))
-            elif cmd == "TERM":
+            elif cmd == "TERM":    # processo terminato correttamente
                 self.guider.join()
                 self.write(f'Guiding terminated: {data}')
                 self.start_button.config(text="START")
                 return
-            if cmd == "ERR":
+            if cmd == "ERR":        #processo terminato con errore
                 self.guider.join()
                 errmsg = f'Guiding error: {data}'
                 self.write(errmsg, error=True)
                 self.error_msg(errmsg)
                 self.start_button.config(text="START")
                 return
-            if cmd == "SHIFT":
+            if cmd == "SHIFT":     # riceve dato shift per plot
                 self.add_points(data[0], data[1], 40, "blue")
             elif cmd == "ORNT":
                 self.orientation = -(90+float(data))*np.pi/180

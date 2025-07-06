@@ -88,7 +88,7 @@ if not TEL_SAMPLER:
     else:
         TEL_SAMPLER = True
 
-ARGERR = 'Argument error. Use -h fro help'
+ARGERR = 'Argument error. Use -h for help'
 
 DLL_PATH = os.path.join(THIS_DIR, 'K8055D.dll')
 

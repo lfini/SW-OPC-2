@@ -37,9 +37,11 @@ import opc.constants as const
 #__version__ = "2.0"   # Modificato tutto per unica applicazione di gestione osservazione
 #__version__ = "2.1"    # Corretto bug che impediva di uscire dal modo "slave" di DTracker
 
-__version__ = "2.2"    # Aggiubnte funzioni per lock
+#__version__ = "2.2"    # Aggiunte funzioni per lock
 
-__date__ = "Settembre 2024"
+__version__ = "2.3"    # Incrementate informazioni di log per homer
+
+__date__ = "Febbraio 2025"
 __author__ = 'Luca Fini'
 
 SHOW_CONFIG = """
