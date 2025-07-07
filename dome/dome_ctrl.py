@@ -56,9 +56,9 @@ import json
 import logging
 from threading import Thread, Lock
 
-__version__ = '2.0'
+__version__ = '2.1'
 __author__ = 'Luca Fini'
-__date__ = 'September 2024'
+__date__ = 'Luglio 2025'
 
 try:
     import readline          #pylint: disable=W0611
@@ -381,10 +381,9 @@ def _dome_loop():                          #pylint: disable=R0912,R0915
         tstart = time.time()
         _exec_timers(tstart)
         with _GB.dome_lock:
-            if tstart > _GB.tcheck:                       # periodically check connection
-                if not _check_connection():
-                    break
-                _GB.tcheck = tstart+_CHECK_PERIOD
+            if not _check_connection():      # periodically check connection
+                time.sleep(_GB.tpoll)
+                continue
             cnt = _GB.handle.ReadCounter(ENCODER)                # update current position
             if _GB.direct == RIGHT_MOVE:
                 _GB.domeaz = int((_GB.saveaz+cnt)%_GB.n360)
@@ -438,10 +437,7 @@ def _dome_loop():                          #pylint: disable=R0912,R0915
         _GB.idletime = nextpoll/_GB.tpoll
         if nextpoll>0:
             time.sleep(nextpoll)
-    if _GB.connected:
-        _GB.logger.info('control loop terminated')
-    else:                 # K8055 not connected
-        _GB.logger.error('control loop terminated for connection error')
+    _GB.logger.info('Dome - control loop terminated')
 
 ###### API support functions
 
