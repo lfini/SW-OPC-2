@@ -22,10 +22,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from opc import utils
 from opc import telsamp as ts
 
-try:
+if sys.platform == 'win32':
     import win32com.client as wcl
     SIMULATED = False
-except ModuleNotFoundError:
+else:
     from opc import dome_ascom_fake as wcl
     print("Using ASCOM_FAKE !!!")
     SIMULATED = True
@@ -227,15 +227,23 @@ def main():                 #pylint: disable=R0915,R0912,R0914
         config = utils.get_config(simul=True)
     root = tk.Tk()
     if not config:
-        error = '\n\nErrore lettura del file di configurazione\n\n'
+        error = '\n\n Errore lettura del file di configurazione \n\n'
         wdg = wg.MessageText(root, error, bg=wg.ERROR_CLR)
         wdg.pack()
         root.mainloop()
         sys.exit()
-    dome = wcl.Dispatch(DOME_ASCOM_NAME)
+    try:
+        dome = wcl.Dispatch(DOME_ASCOM_NAME)
+    except Exception as exc:                #pylint: disable=W0718
+        error = '\n\n Errore ASCOM:\n\n'+'  '+exc.strerror+' \n'
+        wdg = wg.MessageText(root, error, bg=wg.ERROR_CLR)
+        wdg.pack()
+        root.mainloop()
+        sys.exit()
+
     tls = ts.tel_start(sim_tel)
 
-    root.title(f'OPC - Controllo cupola ASCOM - V. {__version__}')
+    root.title(f'OPC - Controllo cupola via ASCOM - V. {__version__}')
     wdg = DTrackerASCOM(root, dome, tls)
     wdg.pack()
     root.iconphoto(False, wg.get_icon('dome', 24))
