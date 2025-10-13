@@ -1,23 +1,25 @@
 // Comandi definiti per il sistema di controllo
-// Ogni comando è costituito da una stringa terminata da '\n'
+// Ogni comando è costituito da una stringa terminata da ':'
 // il primo carattere identifica il comando, quelli eventualmente successivi
-// specificano l'argomento
+// specificano l'argomento.
+// Ogni comando riceve una risposta costituita da una stringa terminata da '\r\n'
 //
 // Comandi di interrogazione:
 //
 // Cod. Risposta   Descrizione
-// v    xxxxxxx    Identificazione (numero di versione del firmware)
-// fN   1/0        Stato finecorsa.N (N=[0..3] num. petalo), 1: aperto, 0: chiuso
-// pN   xxx        Posizione petalo N; xxx: gradi dalla posizione chiuso
-// mN   1/0        Stato movimento petalo N (0: fermo, 1: in moto)
+// v:    xxxxxxx    Identificazione (numero di versione del firmware)
+// fN:   1/0        Stato finecorsa.N (N=[0..3] num. petalo), 1: aperto, 0: chiuso
+// pN:   xxx        Posizione petalo N; xxx: gradi dalla posizione chiuso
+// mN:   1/0        Stato movimento petalo N (0: fermo, 1: in moto)
 
 // Comandi operativi:
 //
 // Cod. Risposta   Descrizione
-// aN   0/errore   Apri petalo N (inizia movimento in apertura)
-// cN   0/errore   Chiudi petalo N (inzia movimento in chiusura)
-// sN   0/error    Stop (interrompe movimento del..) petalo N
-// ixxx 0/errore   Imposta valore massimo angolo raggiungibile
+// aN:   Ok/errore   Apri petalo N (inizia movimento in apertura)
+// cN:   Ok/errore   Chiudi petalo N (inzia movimento in chiusura)
+// sN:   Ok/errore   Stop (interrompe movimento del..) petalo N
+// ixxx: ang/errore  Imposta valore massimo angolo raggiungibile.
+//                   in caso di successo riporta il valore impostato
 
 // Nota: le funzioni di controllo devono agire automaticamente
 //       interrompendo il moto quando si chiude lo switch di fine
@@ -25,125 +27,145 @@
 
 #include "comandi_esecutivi.h"
 
-char *IDENT = "Tappo OPC v 1.0";
+#define REFRESH_INTERVAL 1000  // intrervallo di refresh status (millisec)
 
-//                      codici di errore
-char *OK = "0";       // Successo
+char *Ident = "Tappo OPC v 1.0";
 
-char *E01 = "E01";    // indice petalo errato
-char *E02 = "E02";    // Impostazione angolo limite errata
-char *E03 = "E03";    // errore esecuzione comando
+//                         codici di errore
+char *success = "Ok";   // Successo
 
-int POSIZIONE[4];
-int FINE_CORSA[4];
-int IN_MOTO[4];
+char *err01 = "E01";    // indice petalo errato
+char *err02 = "E02";    // Impostazione angolo limite errata
+char *err03 = "E03";    // errore esecuzione comando
+char *err04 = "E04";    // comando non riconosciuto
 
-int ANGOLO_MAX = 270;
+int posizione[4];
+int fineCorsa[4];
+int inMoto[4];
 
-char CMD_BUFFER[11];
-int char_ix = 0;
-bool CMD_READY = false;
-int CMD_GUARD = sizeof(CMD_BUFFER)-1;
+bool blinker = false;
+
+unsigned long nextRefresh;
+
+int AngoloMax = 270;
+
+unsigned char commandBuffer[11];
+int charIx = 0;
+bool commandReady = false;
+int bufferGuard = sizeof(commandBuffer)-1;
 
 void setup() {
   // put your setup code here, to run once:
-Serial.begin(9600);
-for(int i=1; i<4; i++) POSIZIONE[i]=(-1);
-aggiorna_stato();
+  Serial.begin(9600);
+  pinMode(LED_BUILTIN, OUTPUT);
+  for(int i=1; i<4; i++) posizione[i]=(-1);
+  nextRefresh = 0; 
+  azzera_buffer_comando(); 
+  aggiorna_stato();
 };
 
-void ricevi_comando() {  // da chiamare nel loop per ricevere caratteri dalla line seriale
-  if(CMD_READY) return;      // comando completo e non ancora usato
+void ricevi_comando() {           // da chiamare nel loop per ricevere caratteri
+                                  // dalla linea seriale
+  if(commandReady) return;        // comando pronto. Attendi esecuzione
   while(Serial.available()){
-    char next_ch = Serial.read();
-    if(next_ch == '\r') continue;
-    if(next_ch == '\n'){
-      CMD_BUFFER[char_ix] = '\0';
-      CMD_READY = true;
-    } else
-      if(char_ix < CMD_GUARD)
-        CMD_BUFFER[char_ix++] = next_ch;
+    char nextChar = Serial.read();
+    if(nextChar == ':') {
+      commandBuffer[charIx] = '\0';
+      commandReady = true;
+    } else 
+      if(isalnum(nextChar)) {
+        commandBuffer[charIx] = nextChar;
+        if(charIx < bufferGuard) charIx++;
+      };
   };
+  return;
 };
 
 void azzera_buffer_comando() {  // azzera il buffer dei comandi per accettare un nuovo comando
-  char_ix = 0;
-  CMD_READY = false;
-  };
+  charIx = 0;
+  commandReady = false;
+  for(int i=1; i<sizeof(commandBuffer); i++) commandBuffer[i] = '\0';
+};
 
-int getdigit(char achar) {   // converte singolo carattere in [0..9] in int
-                       // per errori riporta -1
+int digit_to_int(char achar) {   // converte singolo carattere in [0..9] in int
+                                 // per errori riporta -1
   int val = achar-'0';
   if(val<0 || val>9) val = -1;
   return val;
 }
 
-void aggiorna_stato() {   // aggiorna stato complessivo
-  leggi_posizioni(POSIZIONE);
-  leggi_fine_corsa(FINE_CORSA);
-  leggi_stato_moto(IN_MOTO);
+void aggiorna_stato() {          // aggiorna periodicamente stato complessivo
+  if(millis() > nextRefresh) {
+    leggi_posizioni(posizione);
+    leggi_fine_corsa(fineCorsa);
+    leggi_stato_moto(inMoto);
+    if(blinker) {
+      digitalWrite(LED_BUILTIN, HIGH);
+      blinker = false;
+    } else {
+      digitalWrite(LED_BUILTIN, LOW);
+      blinker = true;
+    }
+    nextRefresh = millis()+REFRESH_INTERVAL;
   }
+}
 
-void esegui_comando() {
-  if(CMD_READY) {
-    char* command = CMD_BUFFER;
-   
-    switch(command[0]){
-      case 'i':
-        int value = atoi(command+1);
-        if(value<=0 || value > 300)
-          Serial.println(E02);
-        else
-          Serial.println(OK);
-        azzera_buffer_comando();
-        return;
-      case 'v':
-        Serial.println(IDENT);
-        azzera_buffer_comando();
-        return;
-    };
-    
-    int n_petalo = getdigit(command[1]);
-    if(n_petalo<0 || n_petalo>3){
-      Serial.println(E01);
+void esegui_comando() {   // Esegue comando ricevuto da PC
+                          // Nota: utilizzata catrena di "if" perché
+                          // la frase switch .. case sembra non funzionare
+                          // in modo standard
+  if(commandReady){
+    unsigned char cmd = commandBuffer[0];
+    if(cmd=='i') {                            // comandi senza argomenti
+      int value = atoi(commandBuffer+1);
+      if(value<=0 || value > 300)
+        Serial.println(err02);
+      else
+        Serial.println(value);
       azzera_buffer_comando();
       return;
+    };
+    if(cmd=='v') {
+      Serial.println(Ident);
+      azzera_buffer_comando();
+      return;
+    };
+    
+    // i comandi che seguono richiedono num. di petalo
+    int nPetalo = digit_to_int(commandBuffer[1]);
 
+    if(nPetalo<0 || nPetalo>3){
+      Serial.println(err01);
+      azzera_buffer_comando();
+      return;
     };
-    switch(command[0]){
-      case 's':
-        if(stop_moto(n_petalo))
-          Serial.println(OK);
-        else
-          Serial.println(E03);
-        break;
-      case 'p':
-        Serial.println(POSIZIONE[n_petalo]);
-        break;
-      case 'm':
-        Serial.println(IN_MOTO[n_petalo]);
-        break;
-      case 'f':
-        Serial.println(FINE_CORSA[n_petalo]);
-        break;
-      case 'c':
-        if(chiudi_petalo(n_petalo))
-          Serial.println(OK);
-        else
-          Serial.println(E03);
-        break;
-      case 'a':
-        if(apri_petalo(n_petalo))
-          Serial.println(OK);
-        else
-          Serial.println(E03);
-        break;
-      case 'v':
-        Serial.println(IDENT);
-        break;
-    };
+
+    if(cmd=='s') {
+      if(stop_moto(nPetalo))
+        Serial.println(success);
+      else
+        Serial.println(err03);
+    } else if(cmd=='p')
+      Serial.println(posizione[nPetalo]);
+    else if(cmd=='m')
+      Serial.println(inMoto[nPetalo]);
+    else if(cmd=='f')
+      Serial.println(fineCorsa[nPetalo]);
+    else if(cmd=='c') {
+      if(chiudi_petalo(nPetalo))
+        Serial.println(success);
+      else
+        Serial.println(err03);
+    } else if(cmd=='a') {
+      if(apri_petalo(nPetalo))
+        Serial.println(success);
+      else
+        Serial.println(err03);
+    } else
+      Serial.println(err04);
+
     azzera_buffer_comando();
-  }
+  };
 }
 
 void loop() {
