@@ -27,7 +27,7 @@
 
 #include "comandi_esecutivi.h"
 
-#define REFRESH_INTERVAL 1000  // intrervallo di refresh status (millisec)
+#define REFRESH_INTERVAL 500      // intrervallo di refresh status (millisec)
 
 char *Ident = "Tappo OPC v 1.0";
 
@@ -84,7 +84,6 @@ void ricevi_comando() {           // da chiamare nel loop per ricevere caratteri
 void azzera_buffer_comando() {  // azzera il buffer dei comandi per accettare un nuovo comando
   charIx = 0;
   commandReady = false;
-  for(int i=1; i<sizeof(commandBuffer); i++) commandBuffer[i] = '\0';
 };
 
 int digit_to_int(char achar) {   // converte singolo carattere in [0..9] in int
@@ -95,11 +94,12 @@ int digit_to_int(char achar) {   // converte singolo carattere in [0..9] in int
 }
 
 void aggiorna_stato() {          // aggiorna periodicamente stato complessivo
-  if(millis() > nextRefresh) {
+  if(millis() > nextRefresh) {   // questo lo fa due volte al secondo
     leggi_posizioni(posizione);
     leggi_fine_corsa(fineCorsa);
     leggi_stato_moto(inMoto);
-    if(blinker) {
+
+    if(blinker) {                // un po' di scena per vedere che è vivo
       digitalWrite(LED_BUILTIN, HIGH);
       blinker = false;
     } else {
@@ -111,25 +111,29 @@ void aggiorna_stato() {          // aggiorna periodicamente stato complessivo
 }
 
 void esegui_comando() {   // Esegue comando ricevuto da PC
-                          // Nota: utilizzata catrena di "if" perché
+                          // Nota: utilizzata catena di "if" perché
                           // la frase switch .. case sembra non funzionare
                           // in modo standard
   if(commandReady){
-    unsigned char cmd = commandBuffer[0];
-    if(cmd=='i') {                            // comandi senza argomenti
-      int value = atoi(commandBuffer+1);
-      if(value<=0 || value > 300)
-        Serial.println(err02);
-      else
-        Serial.println(value);
+    bool done = false;
+    switch(commandBuffer[0]) {                   // comandi senza argomenti
+      case 'i': {
+        int value = atoi(commandBuffer+1);
+        if(value<=0 || value > 300)
+          Serial.println(err02);
+        else
+          Serial.println(value);
+        done = true; }
+        break;
+  
+      case 'v': {
+        Serial.println(Ident);
+        done = true; }
+    }
+    if(done) {
       azzera_buffer_comando();
       return;
-    };
-    if(cmd=='v') {
-      Serial.println(Ident);
-      azzera_buffer_comando();
-      return;
-    };
+    }
     
     // i comandi che seguono richiedono num. di petalo
     int nPetalo = digit_to_int(commandBuffer[1]);
@@ -138,34 +142,41 @@ void esegui_comando() {   // Esegue comando ricevuto da PC
       Serial.println(err01);
       azzera_buffer_comando();
       return;
-    };
+    }
 
-    if(cmd=='s') {
-      if(stop_moto(nPetalo))
-        Serial.println(success);
-      else
-        Serial.println(err03);
-    } else if(cmd=='p')
-      Serial.println(posizione[nPetalo]);
-    else if(cmd=='m')
-      Serial.println(inMoto[nPetalo]);
-    else if(cmd=='f')
-      Serial.println(fineCorsa[nPetalo]);
-    else if(cmd=='c') {
-      if(chiudi_petalo(nPetalo))
-        Serial.println(success);
-      else
-        Serial.println(err03);
-    } else if(cmd=='a') {
-      if(apri_petalo(nPetalo))
-        Serial.println(success);
-      else
-        Serial.println(err03);
-    } else
-      Serial.println(err04);
-
+    switch(commandBuffer[0]) {                   // comandi con argomento
+      case 's':
+        if(stop_moto(nPetalo))
+          Serial.println(success);
+        else
+          Serial.println(err03);
+        break;
+      case 'p': 
+        Serial.println(posizione[nPetalo]);
+        break;
+      case 'm':
+        Serial.println(inMoto[nPetalo]);
+        break;
+      case 'f':
+        Serial.println(fineCorsa[nPetalo]);
+        break;
+      case 'c':
+        if(chiudi_petalo(nPetalo))
+          Serial.println(success);
+        else
+          Serial.println(err03);
+        break;
+      case 'a':
+        if(apri_petalo(nPetalo))
+          Serial.println(success);
+        else
+          Serial.println(err03);
+        break;
+      default:
+        Serial.println(err04);
+    }
     azzera_buffer_comando();
-  };
+  }
 }
 
 void loop() {
