@@ -25,23 +25,23 @@
 //       interrompendo il moto quando si chiude lo switch di fine
 //       corsa o quando viene raggiunto l'angolo massimo
 
-#include "comandi_esecutivi.h"
+#include "devices.h"
 
-#define REFRESH_INTERVAL 500      // intrervallo di refresh status (millisec)
+#define REFRESH_INTERVAL 500      // statu srefresh inrterval
 
 char *Ident = "Tappo OPC v 1.0";
 
-//                         codici di errore
-char *success = "Ok";   // Successo
+//                         Error codes
+char *success = "Ok";   // success
 
-char *err01 = "E01";    // indice petalo errato
-char *err02 = "E02";    // Impostazione angolo limite errata
-char *err03 = "E03";    // errore esecuzione comando
-char *err04 = "E04";    // comando non riconosciuto
+char *err01 = "E01";    // wrong petal/motor index
+char *err02 = "E02";    // Wrong motor max angle
+char *err03 = "E03";    // command execution error
+char *err04 = "E04";    // unrecognized command
 
-int posizione[4];
-int fineCorsa[4];
-int inMoto[4];
+float position[4];     // motor positions
+bool atHome[4];         // petal at home
+bool moving[4];        // motor moving status
 
 bool blinker = false;
 
@@ -58,15 +58,16 @@ void setup() {
   // put your setup code here, to run once:
   Serial.begin(9600);
   pinMode(LED_BUILTIN, OUTPUT);
-  for(int i=1; i<4; i++) posizione[i]=(-1);
-  nextRefresh = 0; 
-  azzera_buffer_comando(); 
-  aggiorna_stato();
+  for(int i=1; i<4; i++) position[i]=(-1);
+  nextRefresh = 0;
+  init_motors(); 
+  clear_command_buffer(); 
+  update_status();
 };
 
-void ricevi_comando() {           // da chiamare nel loop per ricevere caratteri
-                                  // dalla linea seriale
-  if(commandReady) return;        // comando pronto. Attendi esecuzione
+void get_command() {              // Called from within the loop to
+                                  // receive characters from the serial line
+  if(commandReady) return;        // The commnad i sready for execution
   while(Serial.available()){
     char nextChar = Serial.read();
     if(nextChar == ':') {
@@ -81,25 +82,24 @@ void ricevi_comando() {           // da chiamare nel loop per ricevere caratteri
   return;
 };
 
-void azzera_buffer_comando() {  // azzera il buffer dei comandi per accettare un nuovo comando
+void clear_command_buffer() {  // clear commnad buffer
   charIx = 0;
   commandReady = false;
 };
 
-int digit_to_int(char achar) {   // converte singolo carattere in [0..9] in int
-                                 // per errori riporta -1
+int digit_to_int(char achar) {   // convert digit character in int 0..9
+                                 // on error returns -1
   int val = achar-'0';
   if(val<0 || val>9) val = -1;
   return val;
 }
 
-void aggiorna_stato() {          // aggiorna periodicamente stato complessivo
-  if(millis() > nextRefresh) {   // questo lo fa due volte al secondo
-    leggi_posizioni(posizione);
-    leggi_fine_corsa(fineCorsa);
-    leggi_stato_moto(inMoto);
 
-    if(blinker) {                // un po' di scena per vedere che è vivo
+void update_status() {           // update system status
+  if(millis() > nextRefresh) {   // called every 500 ms
+    motor_states(moving, position);
+    limit_switches(atHome);
+    if(blinker) {                // blink the LED
       digitalWrite(LED_BUILTIN, HIGH);
       blinker = false;
     } else {
@@ -110,19 +110,18 @@ void aggiorna_stato() {          // aggiorna periodicamente stato complessivo
   }
 }
 
-void esegui_comando() {   // Esegue comando ricevuto da PC
-                          // Nota: utilizzata catena di "if" perché
-                          // la frase switch .. case sembra non funzionare
-                          // in modo standard
+void exec_command() {   // Executes a commnabd into command buffer
   if(commandReady){
     bool done = false;
-    switch(commandBuffer[0]) {                   // comandi senza argomenti
+    switch(commandBuffer[0]) {             // commands without arguments
       case 'i': {
         int value = atoi(commandBuffer+1);
         if(value<=0 || value > 300)
           Serial.println(err02);
-        else
+        else {
           Serial.println(value);
+          set_max_position(value);
+        }
         done = true; }
         break;
   
@@ -131,43 +130,42 @@ void esegui_comando() {   // Esegue comando ricevuto da PC
         done = true; }
     }
     if(done) {
-      azzera_buffer_comando();
+      clear_command_buffer();
       return;
     }
     
-    // i comandi che seguono richiedono num. di petalo
-    int nPetalo = digit_to_int(commandBuffer[1]);
+    int nPetal = digit_to_int(commandBuffer[1]); // Convert argument value
 
-    if(nPetalo<0 || nPetalo>3){
+    if(nPetal<0 || nPetal>3){
       Serial.println(err01);
-      azzera_buffer_comando();
+      clear_command_buffer();
       return;
     }
 
-    switch(commandBuffer[0]) {                   // comandi con argomento
+    switch(commandBuffer[0]) {              // commands with argument
       case 's':
-        if(stop_moto(nPetalo))
+        if(stop_motor(nPetal))
           Serial.println(success);
         else
           Serial.println(err03);
         break;
       case 'p': 
-        Serial.println(posizione[nPetalo]);
+        Serial.println(position[nPetal]);
         break;
       case 'm':
-        Serial.println(inMoto[nPetalo]);
+        Serial.println(moving[nPetal]);
         break;
       case 'f':
-        Serial.println(fineCorsa[nPetalo]);
+        Serial.println(atHome[nPetal]);
         break;
       case 'c':
-        if(chiudi_petalo(nPetalo))
+        if(close_petal(nPetal))
           Serial.println(success);
         else
           Serial.println(err03);
         break;
       case 'a':
-        if(apri_petalo(nPetalo))
+        if(open_petal(nPetal))
           Serial.println(success);
         else
           Serial.println(err03);
@@ -175,13 +173,16 @@ void esegui_comando() {   // Esegue comando ricevuto da PC
       default:
         Serial.println(err04);
     }
-    azzera_buffer_comando();
+    clear_command_buffer();
   }
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
-  aggiorna_stato();
-  ricevi_comando();
-  esegui_comando();
+  motor_control(0);
+  motor_control(1);
+  motor_control(2);
+  motor_control(3);    
+  update_status();
+  get_command();
+  exec_command();
 }
