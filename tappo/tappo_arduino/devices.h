@@ -20,3 +20,4 @@ bool stop_motor(int n_petal);        // stop motor
 void init_motors();        // initialize motors
 
 void set_max_position(int value);
+int get_max_position();

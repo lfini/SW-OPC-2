@@ -19,7 +19,7 @@ typedef struct {
 
 Motor motors[4];
 
-int Max_Position = DEFAULT_MAX_POSITION;
+int Max_Position = int(DEFAULT_MAX_POSITION/DEGREES_PER_STEP+0.5);
 
 void init_motors() {       // Initialize motors
   pinMode(M0_DIRECTION_PIN, OUTPUT);
@@ -109,6 +109,10 @@ bool open_petal(int n_petal){       // Start opening petal
 
 void set_max_position(int value) {  // set angle limit
    Max_Position = int(value/DEGREES_PER_STEP+0.5);
+}
+
+int get_max_position() {
+  return int(Max_Position*DEGREES_PER_STEP+0.5);
 }
 
 bool close_petal(int n_petal){     // Starts closing petal

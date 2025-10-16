@@ -8,9 +8,10 @@
 //
 // Cod. Risposta   Descrizione
 // v:    xxxxxxx    Identificazione (numero di versione del firmware)
-// fN:   1/0        Stato finecorsa.N (N=[0..3] num. petalo), 1: aperto, 0: chiuso
+// fN:   1/0        Stato finecorsa.N (N=[0..3] num. petalo), 0: aperto, 1: chiuso
 // pN:   xxx        Posizione petalo N; xxx: gradi dalla posizione chiuso
 // mN:   1/0        Stato movimento petalo N (0: fermo, 1: in moto)
+// M:    xxxx       Valore angolo massimo
 
 // Comandi operativi:
 //
@@ -18,6 +19,7 @@
 // aN:   Ok/errore   Apri petalo N (inizia movimento in apertura)
 // cN:   Ok/errore   Chiudi petalo N (inzia movimento in chiusura)
 // sN:   Ok/errore   Stop (interrompe movimento del..) petalo N
+// S:    Ok/errore   Stop tutti i motori
 // ixxx: ang/errore  Imposta valore massimo angolo raggiungibile.
 //                   in caso di successo riporta il valore impostato
 
@@ -110,10 +112,19 @@ void update_status() {           // update system status
   }
 }
 
-void exec_command() {   // Executes a commnabd into command buffer
+void exec_command() {   // Executes the command from command buffer
   if(commandReady){
     bool done = false;
     switch(commandBuffer[0]) {             // commands without arguments
+      case 'S': {
+        stop_motor(0);
+        stop_motor(1);
+        stop_motor(2);
+        stop_motor(3);
+        Serial.println(success);
+      }
+      done = true;
+      break;
       case 'i': {
         int value = atoi(commandBuffer+1);
         if(value<=0 || value > 300)
@@ -124,7 +135,11 @@ void exec_command() {   // Executes a commnabd into command buffer
         }
         done = true; }
         break;
-  
+      case 'M': {
+        Serial.println(get_max_position());
+        done = true;
+        }
+        break;
       case 'v': {
         Serial.println(Ident);
         done = true; }
