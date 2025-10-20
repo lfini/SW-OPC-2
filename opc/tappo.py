@@ -49,9 +49,9 @@ Comandi di interrogazione:
  Cod. Risposta   Descrizione
  v    xxxxxxx    Identificazione (numero di versione del firmware)
  fN   1/0        Stato finecorsa.N (N=[0..3] num. petalo), 1: aperto, 0: chiuso
- pN   xxx        Posizione petalo N; xxx: gradi dalla posizione chiuso
+ pN   xxx        Posizione petalo N (num. step dalla posizione chiuso)
  mN   1/0        Stato movimento petalo N (0: fermo, 1: in moto)
- M    xxxx       Valore angolo massimo
+ M    xxxx       Valore angolo massimo (num. step da chiuso)
 
  Comandi operativi:
 
@@ -60,7 +60,7 @@ Comandi di interrogazione:
  cN   Ok/errore   Chiudi petalo N (inzia movimento in chiusura)
  sN   Ok/errore   Stop (interrompe movimento del..) petalo N
  S    Ok/errore   Stop tutti i motori
- ixxx ang/errore  Imposta valore massimo angolo raggiungibile.
+ ixxx ang/errore  Imposta valore massimo angolo raggiungibile (Num. step da chiuso).
                    in caso di successo riporta il valore impostato
 """
 
@@ -73,7 +73,8 @@ comando al controller del tappo.
 *****************************************************
 """
 REPLIES = {
-    "Ok": "Comando correttamente eseguito",
+    "Ok": "Comando eseguito",
+    "E00": "Valore max angolo non impostato",
     "E01": "Indice motore errato",
     "E02": "Massimo valore angolo illegale",
     "E03": "Errore esecuzione comando",

@@ -19,7 +19,7 @@ typedef struct {
 
 Motor motors[4];
 
-int Max_Position = int(DEFAULT_MAX_POSITION/DEGREES_PER_STEP+0.5);
+int Max_Position = 0;
 
 void init_motors() {       // Initialize motors
   pinMode(M0_DIRECTION_PIN, OUTPUT);
@@ -57,15 +57,18 @@ void init_motors() {       // Initialize motors
 }
 
 void motor_control(int n_motor) { // update motor status, generating pulses
-                              // as necessary
+                                  // as necessary
   Motor motor = motors[n_motor];
   if(motor.timer < millis()) {
     if(digitalRead(motor.limit_switch_pin) == LIMIT_SWITCH_CLOSED) {
       motor.pulse_on = false;
       motor.position = 0;
+      digitalWrite(motor.pulse_pin, LOW);
     } else
-      if(motor.position >= motor.max_position)
+      if(motor.position >= motor.max_position) {
         motor.pulse_on = false;
+        digitalWrite(motor.pulse_pin, LOW);
+      }
     if(motor.pulse_on) {        // motor is running
       if(digitalRead(motor.pulse_pin) == HIGH)
         digitalWrite(motor.pulse_pin, LOW);
@@ -75,18 +78,16 @@ void motor_control(int n_motor) { // update motor status, generating pulses
           motor.position++;
         else
           motor.position--;
-    } else
-        digitalWrite(motor.pulse_pin, LOW);
+    }
     motor.timer = millis()+MOTOR_HALF_PERIOD;
   } 
 }
 
-
-void motor_states(bool moving[4],  // return motors running status and position (in degrees)
-                  float position[4]) {
+void motor_states(bool moving[4],      // return motors running status
+                  int position[4]) {   // and position (in steps from closed position)
   for(int i=0; i<4; i++) {
     moving[i] = motors[i].pulse_on;
-    position[i] = motors[i].position*DEGREES_PER_STEP;
+    position[i] = motors[i].position;
   }
 }
 
@@ -108,11 +109,11 @@ bool open_petal(int n_petal){       // Start opening petal
 }
 
 void set_max_position(int value) {  // set angle limit
-   Max_Position = int(value/DEGREES_PER_STEP+0.5);
+   Max_Position = value;
 }
 
 int get_max_position() {
-  return int(Max_Position*DEGREES_PER_STEP+0.5);
+  return int(Max_Position);
 }
 
 bool close_petal(int n_petal){     // Starts closing petal

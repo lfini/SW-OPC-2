@@ -20,6 +20,5 @@
 #define LIMIT_SWITCH_CLOSED LOW  // 
 
 #define MOTOR_HALF_PERIOD 100  // motor speed is 5 steps per second or 9°/sec
-#define DEGREES_PER_STEP 1.8   // degrees per motor step
 
 #define DEFAULT_MAX_POSITION 280

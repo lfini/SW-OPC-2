@@ -3,7 +3,7 @@
 //
 
 void motor_states(bool moving[4],     // read motors current positions
-		  float position[4]); // into provided buffer
+		              int position[4]);   // into provided buffer
 
 void motor_control(int n_motor);           // upodate motor status
                                     
@@ -17,7 +17,7 @@ bool close_petal(int n_petal);        // Start motor to close the petal
 
 bool stop_motor(int n_petal);        // stop motor
 
-void init_motors();        // initialize motors
+void init_motors();                  // initialize motors
 
 void set_max_position(int value);
 int get_max_position();

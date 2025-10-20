@@ -9,9 +9,9 @@
 // Cod. Risposta   Descrizione
 // v:    xxxxxxx    Identificazione (numero di versione del firmware)
 // fN:   1/0        Stato finecorsa.N (N=[0..3] num. petalo), 0: aperto, 1: chiuso
-// pN:   xxx        Posizione petalo N; xxx: gradi dalla posizione chiuso
+// pN:   xxx        Posizione petalo N; xxx: numero step dalla posizione chiuso
 // mN:   1/0        Stato movimento petalo N (0: fermo, 1: in moto)
-// M:    xxxx       Valore angolo massimo
+// M:    xxxx       Valore angolo massimo (in step dalla posizione chiuso)
 
 // Comandi operativi:
 //
@@ -29,27 +29,28 @@
 
 #include "devices.h"
 
-#define REFRESH_INTERVAL 500      // statu srefresh inrterval
+#define REFRESH_INTERVAL 500      // status srefresh inrterval
 
 char *Ident = "Tappo OPC v 1.0";
 
 //                         Error codes
 char *success = "Ok";   // success
 
+char *err00 = "E00";    // Max angle not initialized
 char *err01 = "E01";    // wrong petal/motor index
 char *err02 = "E02";    // Wrong motor max angle
 char *err03 = "E03";    // command execution error
 char *err04 = "E04";    // unrecognized command
 
-float position[4];     // motor positions
-bool atHome[4];         // petal at home
+int position[4];       // motor positions
+bool atHome[4];        // petal at home
 bool moving[4];        // motor moving status
 
 bool blinker = false;
 
 unsigned long nextRefresh;
 
-int AngoloMax = 270;
+int AngoloMax = 0;
 
 unsigned char commandBuffer[11];
 int charIx = 0;
@@ -122,17 +123,12 @@ void exec_command() {   // Executes the command from command buffer
         stop_motor(2);
         stop_motor(3);
         Serial.println(success);
-      }
-      done = true;
-      break;
+        done = true; }
+        break;
       case 'i': {
         int value = atoi(commandBuffer+1);
-        if(value<=0 || value > 300)
-          Serial.println(err02);
-        else {
-          Serial.println(value);
-          set_max_position(value);
-        }
+        set_max_position(value);
+        Serial.println(value);
         done = true; }
         break;
       case 'M': {
@@ -179,11 +175,14 @@ void exec_command() {   // Executes the command from command buffer
         else
           Serial.println(err03);
         break;
-      case 'a':
-        if(open_petal(nPetal))
+      case 'a': {
+        if(get_max_position() == 0)
+          Serial.println(err00);
+        else if(open_petal(nPetal))
           Serial.println(success);
         else
           Serial.println(err03);
+        }
         break;
       default:
         Serial.println(err04);
