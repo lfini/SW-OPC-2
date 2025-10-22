@@ -19,9 +19,11 @@ typedef struct {
 
 Motor motors[4];
 
-int Max_Position = 0;
+int fake_switch[4];
+int max_position = 0;
+bool test_mode = false;
 
-void init_motors() {       // Initialize motors
+void InitMotors() {       // Initialize motors
   pinMode(M0_DIRECTION_PIN, OUTPUT);
   pinMode(M1_DIRECTION_PIN, OUTPUT);
   pinMode(M2_DIRECTION_PIN, OUTPUT);
@@ -56,11 +58,11 @@ void init_motors() {       // Initialize motors
   }
 }
 
-void motor_control(int n_motor) { // update motor status, generating pulses
+void MotorControl(int n_motor) { // update motor status, generating pulses
                                   // as necessary
   Motor motor = motors[n_motor];
   if(motor.timer < millis()) {
-    if(digitalRead(motor.limit_switch_pin) == LIMIT_SWITCH_CLOSED) {
+    if(digitalRead(motor.limit_switch_pin) == LOW) {
       motor.pulse_on = false;
       motor.position = 0;
       digitalWrite(motor.pulse_pin, LOW);
@@ -83,7 +85,7 @@ void motor_control(int n_motor) { // update motor status, generating pulses
   } 
 }
 
-void motor_states(bool moving[4],      // return motors running status
+void MotorStates(bool moving[4],      // return motors running status
                   int position[4]) {   // and position (in steps from closed position)
   for(int i=0; i<4; i++) {
     moving[i] = motors[i].pulse_on;
@@ -91,13 +93,17 @@ void motor_states(bool moving[4],      // return motors running status
   }
 }
 
-void limit_switches(bool buffer[4]){ // returns status of limit switches
+void LimitSwitches(bool buffer[4]){ // returns status of limit switches
                                      // true: closed, fasle:open
-  for(int i=0; i<4; i++)
-    buffer[i] = digitalRead(motors[i].limit_switch_pin) == LIMIT_SWITCH_CLOSED;
+  if(test_mode)
+    for(int i=0; i<4; i++)
+      buffer[i] = fake_switch[i];
+  else
+    for(int i=0; i<4; i++)
+      buffer[i] = digitalRead(motors[i].limit_switch_pin);
 }
 
-bool open_petal(int n_petal){       // Start opening petal
+bool OpenPetal(int n_petal){       // Start opening petal
                                     // returns true on success
   if(motors[n_petal].pulse_on)
     return false;
@@ -107,27 +113,50 @@ bool open_petal(int n_petal){       // Start opening petal
   motors[n_petal].pulse_on = true;
   return true;
 }
-
-void set_max_position(int value) {  // set angle limit
-   Max_Position = value;
+void SetMaxPosition(int value) {  // set angle limit
+   max_position = value;
 }
 
-int get_max_position() {
-  return int(Max_Position);
+int GetMaxPosition() {
+  return max_position;
 }
 
-bool close_petal(int n_petal){     // Starts closing petal
+bool ClosePetal(int n_petal){     // Starts closing petal
                                    // returns true on success
   if(motors[n_petal].pulse_on)
     return false;
-  if(digitalRead(motors[n_petal].limit_switch_pin) == LIMIT_SWITCH_CLOSED)
+  if(digitalRead(motors[n_petal].limit_switch_pin) == LOW)
     return false;
   motors[n_petal].direction = CLOSE;
   motors[n_petal].pulse_on = true;
   return true;
 }                      
                   
-bool stop_motor(int n_petal) {       // stop motor
+bool StopMotor(int n_petal) {       // stop motor
   motors[n_petal].pulse_on = false;
   return true;
 }
+
+// --------------------  Test mode support functions
+
+void SetTestMode() {
+  test_mode = true;
+  for(int i=0; i<4; i++) {         // simulate system at home
+    motors[i].position = 0;
+    fake_switch[i] = LOW;      // fake switches set as closed
+  }
+}
+
+bool SetFakeSwitch(int n_petal, int mode) {
+  bool ret = false;
+  if(test_mode) {
+    ret = true; 
+    fake_switch[n_petal] = mode;
+  }
+  return ret;
+}
+
+bool IsTestMode() {
+  return test_mode;
+}
+

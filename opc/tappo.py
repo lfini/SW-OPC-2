@@ -6,7 +6,7 @@ Uso per test:
     python tappo.py [-d] 0/1
 
 dove:
-    0:  lancia test 0 (invio comandi elemantari)
+    0:  lancia test 0 (invio comandi elementari)
     1:  lancia test 1 (test procedura completa di apertura / chiusura)
 
     -d: attiva debug
@@ -42,26 +42,30 @@ DO_CLOSE = 2
 E05 = "E05"
 
 HELP = """
-Comandi definiti:
-
-Comandi di interrogazione:
+ Comandi di interrogazione:
 
  Cod. Risposta   Descrizione
  v    xxxxxxx    Identificazione (numero di versione del firmware)
  fN   1/0        Stato finecorsa.N (N=[0..3] num. petalo), 1: aperto, 0: chiuso
- pN   xxx        Posizione petalo N (num. step dalla posizione chiuso)
+ pN   xxxx       Posizione petalo N; xxx: numero step dalla posizione chiuso
  mN   1/0        Stato movimento petalo N (0: fermo, 1: in moto)
- M    xxxx       Valore angolo massimo (num. step da chiuso)
+ M    xxxx       Valore angolo massimo (in step dalla posizione chiuso)
+ I    xxxx       Tempo morto (idle) nel ciclo (millisec)
 
  Comandi operativi:
 
  Cod. Risposta   Descrizione
  aN   Ok/errore   Apri petalo N (inizia movimento in apertura)
  cN   Ok/errore   Chiudi petalo N (inzia movimento in chiusura)
+ ixxx ang/errore  Imposta valore massimo angolo (in num di step) raggiungibile.
+                   in caso di successo riporta il valore impostato
  sN   Ok/errore   Stop (interrompe movimento del..) petalo N
  S    Ok/errore   Stop tutti i motori
- ixxx ang/errore  Imposta valore massimo angolo raggiungibile (Num. step da chiuso).
-                   in caso di successo riporta il valore impostato
+
+ Comandi per modo test:
+ T    Ok/errore   Imposta modo test (consente alcuni test in assenza di motori)
+ xNM  Ok/errore   Simula chiusura/apertura del limit switch N
+                   (M == 0: aperto; M == 1: chiuso)
 """
 
 WARNING = """
@@ -91,7 +95,7 @@ class GLOB:  # pylint: disable=R0903
     serial = None
     homing_status = [""] * 4  # HOMING, CLOSED, ERROR o indefinito
     lock = Lock()
-    max_angle = -1.0
+    max_angle = 0
 
 
 def _debug(text):
@@ -107,27 +111,31 @@ def init_serial():
     except:                      #pylint: disable=W0702
         GLOB.status = ERROR
         GLOB.connected = False
-        GLOB.max_angle = -1.0
+        GLOB.max_angle = 0
     else:
         GLOB.connected = True
         time.sleep(3)
         GLOB.status = CONNECTED
-        GLOB.max_angle = float(send_command("M"))
+        GLOB.max_angle = get_max_angle()
     return GLOB.connected
 
 
-def send_command(cmd):
-    "send commad to shutter controller"
+def send_command_raw(cmd):
+    "send command to shutter controlleri, Return full reply"
     if not GLOB.connected:
         return E05
-    tcmd = (cmd + ":").encode("ascii")
-    _debug(f"send command: {tcmd}")
+    tcmd = ("!"+cmd+":").encode("ascii")
+    _debug(f"sending command: {tcmd}")
     with GLOB.lock:
         GLOB.serial.write(tcmd)
         line = GLOB.serial.readline()
     _debug(f"command returns: {line}")
     return line.decode("utf8").strip()
 
+def send_command(cmd):
+    "send command and remove verification code from reply"
+    ret = send_command_raw(cmd)
+    return ret.split("-")[0]
 
 def set_debug(enable=True):
     "abilita/disabilita debug"
@@ -138,10 +146,10 @@ def get_status():
     "read status of four petals"
     ret = {"global": GLOB.status}
     if GLOB.connected:
-        ret["positions"] = [float(send_command("p" + str(x))) for x in range(4)]
+        ret["positions"] = [int(send_command("p" + str(x))) for x in range(4)]
         ret["homing"] = GLOB.homing_status.copy()
     else:
-        ret["positions"] = [-1.0]*4
+        ret["positions"] = [-1]*4
         ret["homing"] = [""]*4
     return ret
 
@@ -159,20 +167,20 @@ def _do_homing():
     for nptl in range(4):
         GLOB.homing_status[nptl] = HOMING
         spos = send_command("p" + str(nptl))
-        pos0 = float(spos)
-        if pos0 == 0.0:
+        pos0 = int(spos)
+        if pos0 == 0:
             GLOB.homing_status[nptl] = CLOSED
             continue
-        send_command("c" + str(nptl))
+        send_command_raw("c" + str(nptl))
         endtime = time.time() + 5
         while True:
             time.sleep(1)
             if time.time() > endtime:
                 GLOB.homing_status[nptl] = ERROR
-                send_command("s" + str(nptl))
+                send_command_raw("s" + str(nptl))
                 break
             spos = send_command("p" + str(nptl))
-            pos = int(float(spos) + 0.5)
+            pos = int(spos)
             if pos == 0:
                 GLOB.homing_status[nptl] = CLOSED
                 break
@@ -187,15 +195,15 @@ def _do_homing():
 def _do_action(mode):
     "funzione apertura/chiusura da lanciare con thread"
     def check_max_angle(npt):
-        spos = send_command("p" + str(npt))
+        spos = send_command(f"p{npt}:")
         if spos.startswith("E"):
             GLOB.status = ERROR
             return False
-        pos = float(spos)
+        pos = int(spos)
         return pos-GLOB.max_angle >= 0
 
     def check_closed(npt):
-        ret = send_command("f"+str(npt))
+        ret = send_command(f"f{npt}:")
         return ret == CLOSED
 
     GLOB.status = MOVING
@@ -206,7 +214,7 @@ def _do_action(mode):
         cmd = "c"
         check_func = check_closed
     for nptl in range(4):
-        ret = send_command(cmd+str(nptl))
+        ret = send_command(f"{cmd}{nptl}")
         if ret != SUCCESS:
             GLOB.status = ERROR
             break
@@ -263,19 +271,22 @@ def test0():
     "test comandi elemantari"
     print("inizializzazione linea seriale")
     stat = init_serial()
+    print()
     if stat:
-        print("Controllore connesso")
+        ident = send_command_raw("v:").strip()
+        print("Controllore connesso:", ident)
     else:
         print("Errore: controllore non connesso")
+        sys.exit()
     print(WARNING)
     while True:
-        cmd = input("Comando (q: stop, ?: help)? ").strip()
-        if cmd[:1] == "q":
-            break
-        if cmd[:1] == "?":
+        cmd = input("Comando (q: stop, ?/invio: help)? ").strip()
+        if not(cmd) or cmd[:1] == "?":
             print(HELP)
             continue
-        reply = send_command(cmd)
+        if cmd[:1] == "q":
+            break
+        reply = send_command_raw(cmd)
         long = REPLIES.get(reply, "")
         print("REPL:", reply, "-", long)
 

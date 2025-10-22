@@ -2,22 +2,28 @@
 // header file for commands 
 //
 
-void motor_states(bool moving[4],     // read motors current positions
+void MotorStates(bool moving[4],     // read motors current positions
 		              int position[4]);   // into provided buffer
 
-void motor_control(int n_motor);           // upodate motor status
+void MotorControl(int n_motor);       // upodate motor status
                                     
-void limit_switches(bool closed[4]);  // read limits switches status
-                                      // into provided buffer (true: closed, false: open
+void LimitSwitches(int closed[4]);    // read limits switches status
+                                      // into provided buffer (0: closed, 1: open)
 
-bool open_petal(int n_petal);         // Start motor to open the petal
-                                      // the motor must stop when the max angle is reached
-bool close_petal(int n_petal);        // Start motor to close the petal
-                                      // The motor stops when the home position is reached
+bool OpenPetal(int n_petal);         // Start motor N to open the petal
+                                     // the motor must stop when the max angle is reached
+bool ClosePetal(int n_petal);        // Start motor N to close the petal
+                                     // The motor stops when the home position is reached
 
-bool stop_motor(int n_petal);        // stop motor
+bool StopMotor(int n_petal);        // stop motor N
 
-void init_motors();                  // initialize motors
+void InitMotors();                  // initialize motors
 
-void set_max_position(int value);
-int get_max_position();
+void SetMaxPosition(int value);
+int GetMaxPosition();
+
+// test mode support functions
+
+void SetTestMode();
+bool IsTestMode();
+bool SetFakeSwitch(int n_petal, int mode);

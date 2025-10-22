@@ -17,8 +17,6 @@
 #define OPEN HIGH     // motor direction to open the petal
 #define CLOSE LOW     // motor direction to close the petal
 
-#define LIMIT_SWITCH_CLOSED LOW  // 
-
 #define MOTOR_HALF_PERIOD 100  // motor speed is 5 steps per second or 9°/sec
 
 #define DEFAULT_MAX_POSITION 280
