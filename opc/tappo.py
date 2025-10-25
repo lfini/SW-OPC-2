@@ -3,13 +3,14 @@ tappo.py - Controllo tappo del telescopio OPC
 
 Uso per test:
 
-    python tappo.py [-d] 0/1
+    python tappo.py [-d] [-t] 0/1
 
 dove:
     0:  lancia test 0 (invio comandi elementari)
     1:  lancia test 1 (test procedura completa di apertura / chiusura)
 
     -d: attiva debug
+    -t: mette controllore in modo "test"
 """
 
 import sys
@@ -21,7 +22,7 @@ import serial
 if sys.platform == "linux":
     TTY = "/dev/ttyACM0"
 elif sys.platform == "win32":
-    TTY = "COM3"
+    TTY = "COM5"
 else:
     raise RuntimeError(f"{sys.platform} non supportato")
 
@@ -46,26 +47,26 @@ HELP = """
 
  Cod. Risposta   Descrizione
  v    xxxxxxx    Identificazione (numero di versione del firmware)
- fN   1/0        Stato finecorsa.N (N=[0..3] num. petalo), 1: aperto, 0: chiuso
+ lN   1/0        Stato finecorsa.N (N=[0..3] num. petalo), 1: aperto, 0: chiuso
  pN   xxxx       Posizione petalo N; xxx: numero step dalla posizione chiuso
- mN   1/0        Stato movimento petalo N (0: fermo, 1: in moto)
- M    xxxx       Valore angolo massimo (in step dalla posizione chiuso)
- I    xxxx       Tempo morto (idle) nel ciclo (millisec)
+ mN   1/0        Stato movimento petalo N (0: fermo, 1: in apertura, -1: in chiusura)
+ A    xxxx       Valore angolo massimo (in step dalla posizione chiuso)
+ N    xxxx       Numero di comandi ricevuti (supporto per debug)
 
  Comandi operativi:
 
  Cod. Risposta   Descrizione
- aN   Ok/errore   Apri petalo N (inizia movimento in apertura)
+ oN   Ok/errore   Apri petalo N (inizia movimento in apertura)
  cN   Ok/errore   Chiudi petalo N (inzia movimento in chiusura)
- ixxx ang/errore  Imposta valore massimo angolo (in num di step) raggiungibile.
-                   in caso di successo riporta il valore impostato
+ axxx ang/errore  Imposta valore massimo angolo (in num di step) raggiungibile.
+                  in caso di successo riporta il valore impostato
  sN   Ok/errore   Stop (interrompe movimento del..) petalo N
  S    Ok/errore   Stop tutti i motori
 
- Comandi per modo test:
- T    Ok/errore   Imposta modo test (consente alcuni test in assenza di motori)
- xNM  Ok/errore   Simula chiusura/apertura del limit switch N
-                   (M == 0: aperto; M == 1: chiuso)
+ Comandi per debug:
+
+ MN   aaaa       Legge informazioni su stato petalo N
+ N    xxxx       Legge numero di comandi ricevuti
 """
 
 WARNING = """
@@ -92,6 +93,7 @@ class GLOB:  # pylint: disable=R0903
     status = ""
     connected = False
     debug = False
+    test = False
     serial = None
     homing_status = [""] * 4  # HOMING, CLOSED, ERROR o indefinito
     lock = Lock()
@@ -135,7 +137,7 @@ def send_command_raw(cmd):
 def send_command(cmd):
     "send command and remove verification code from reply"
     ret = send_command_raw(cmd)
-    return ret.split("-")[0]
+    return ret.rsplit("-", 1)[0]
 
 def set_debug(enable=True):
     "abilita/disabilita debug"
@@ -156,7 +158,7 @@ def get_status():
 
 def get_max_angle():
     "laggi valore angolo massimo"
-    ret = send_command("M")
+    ret = send_command("A")
     if ret.startswith("E"):
         return -1
     return int(ret)
@@ -203,12 +205,12 @@ def _do_action(mode):
         return pos-GLOB.max_angle >= 0
 
     def check_closed(npt):
-        ret = send_command(f"f{npt}:")
+        ret = send_command(f"l{npt}:")
         return ret == CLOSED
 
     GLOB.status = MOVING
     if mode == DO_OPEN:
-        cmd = "a"
+        cmd = "o"
         check_func = check_max_angle
     else:
         cmd = "c"
@@ -266,18 +268,8 @@ def chiudi():
     thread.start()
     return True
 
-
-def test0():
-    "test comandi elemantari"
-    print("inizializzazione linea seriale")
-    stat = init_serial()
-    print()
-    if stat:
-        ident = send_command_raw("v:").strip()
-        print("Controllore connesso:", ident)
-    else:
-        print("Errore: controllore non connesso")
-        sys.exit()
+def manual_commands():
+    "invio comandi in modo manuale"
     print(WARNING)
     while True:
         cmd = input("Comando (q: stop, ?/invio: help)? ").strip()
@@ -287,24 +279,59 @@ def test0():
         if cmd[:1] == "q":
             break
         reply = send_command_raw(cmd)
-        long = REPLIES.get(reply, "")
-        print("REPL:", reply, "-", long)
+        ret = reply.rsplit("-", 1)[0]
+        long = REPLIES.get(ret, "")
+        if long:
+            print("REPL:", reply, "-", long)
+        else:
+            print("REPL:", reply)
 
 
-def test1():
+def test0():
+    "test comandi elementari"
+    print("inizializzazione linea seriale")
+    stat = init_serial()
+    print()
+    if stat:
+        ident = send_command_raw("v:").strip()
+        print("Controllore connesso:", ident)
+    else:
+        print("Errore: controllore non connesso")
+        sys.exit()
+    manual_commands()
+
+
+def test1():                 #pylint: disable=R0912,R0915
     "test comandi complessi"
     print("inizializzazione linea seriale")
-    init_serial()
+    stat = init_serial()
+    if stat:
+        ident = send_command_raw("v:")
+        print("Controllore connesso:", ident)
+    else:
+        print("Errore: controllore non connesso")
+        sys.exit()
+    if GLOB.test:
+        ret = send_command("T")
+        if ret != SUCCESS:
+            print("Errore impostazione modo test")
+            sys.exit()
     print("inizio procedura di homing")
     start_homing()
+    npetal = 0
     while True:
         time.sleep(2)
         status = get_status()
         print(f"Stato controller: {status}")
         if status["global"] in (CLOSED, ERROR):
             break
+        if GLOB.test:
+            send_command(f"x{npetal}1")  # simula chiusura limit switch
+            npetal += 1
     if status["global"] == ERROR:
         print("Procedura di homing fallita")
+        print("Passaggio a comandi manuali")
+        manual_commands()
         sys.exit()
     print()
     print("Inizio apertura tappo")
@@ -336,6 +363,7 @@ def test1():
 
 if __name__ == "__main__":
     GLOB.debug = "-d" in sys.argv
+    GLOB.test = "-t" in sys.argv
     what = sys.argv[-1]
     if what == "0":
         test0()
