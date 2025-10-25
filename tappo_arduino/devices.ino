@@ -6,7 +6,7 @@ Interface to hardware: limit switches and motors
 #include "config.h"
 #include "devices.h"
 
-#define DEBUG_BUF_LEN 100 
+#define REPLY_BUF_LEN 100 
 
 static int motor_direction_pin[4];
 static int motor_pulse_pin[4];
@@ -15,7 +15,7 @@ static int motor_pulse_on[4];
 static int motor_position[4];      // steps in opening direction (0: at home, i.e.: closed)
 
 static int max_position = 0;
-static char debug_buffer[DEBUG_BUF_LEN+1] = "...";
+static char reply_buffer[REPLY_BUF_LEN+1];
 
 void SetupMotors() {       // Setup motors
   motor_direction_pin[0] = M0_DIRECTION_PIN;
@@ -49,7 +49,7 @@ void MotorControl(int n_petal) { // update motor status, generating pulses
   bool closing = motor_pulse_on[n_petal] && (digitalRead(motor_direction_pin[n_petal]) == CLOSE);
   bool opening = motor_pulse_on[n_petal] && (digitalRead(motor_direction_pin[n_petal]) == OPEN);
   if(closing) {
-    if(GetLimitSwitch(n_petal) == LOW) {  // control stop at closed position
+    if(digitalRead(motor_limit_switch_pin[n_petal]) == LOW) {  // control stop at closed position
       motor_pulse_on[n_petal] = 0;
       motor_position[n_petal] = 0;
       digitalWrite(motor_pulse_pin[n_petal], LOW);
@@ -73,23 +73,8 @@ void MotorControl(int n_petal) { // update motor status, generating pulses
   }
 }
 
-int GetPosition(int n_petal) {
-  return motor_position[n_petal];
-}
-
-int GetDirection(int n_petal) {
-  int dir = digitalRead(motor_direction_pin[n_petal]);
-  if(motor_pulse_on[n_petal]) 
-    return (dir == CLOSE) ? -1 : 1;
-  return 0;
-}
-
-int GetLimitSwitch(int n_petal) {  // legge stato del limit switch
-  return digitalRead(motor_limit_switch_pin[n_petal]);
-}
-
 bool OpenPetal(int n_petal){       // Start opening petal
-                                    // returns true on success
+                                   // returns true on success
   if(motor_pulse_on[n_petal])
     return false;
   if(motor_position[n_petal] < 0)   // motor has not be homed
@@ -113,8 +98,10 @@ bool ClosePetal(int n_petal){     // Starts closing petal
                                   // returns true on success
   if(motor_pulse_on[n_petal])
     return false;
-  if(GetLimitSwitch(n_petal) == LOW)
-    return false;
+  if(digitalRead(motor_limit_switch_pin[n_petal]) == LOW) {
+    motor_position[n_petal] = 0;
+    return true;
+  }
   digitalWrite(motor_direction_pin[n_petal], CLOSE);
   motor_pulse_on[n_petal] = 1;
   return true;
@@ -125,9 +112,16 @@ bool StopMotor(int n_petal) {       // stop motor
   return true;
 }
 
-char *GetMotorInfo(int n_petal) {
-  snprintf(debug_buffer, DEBUG_BUF_LEN, "Mot.#%d [pul.pin:%d, dir.pin:%d, lsw.pin:%d] - pulse:%d, direc:%d, pos:%d, lsw:%d", 
+char *GetPetalStatus(int n_petal) {
+  snprintf(reply_buffer, REPLY_BUF_LEN, "%d,%d,%d,%d", 
+           motor_pulse_on[n_petal], digitalRead(motor_direction_pin[n_petal]),
+           motor_position[n_petal], digitalRead(motor_limit_switch_pin[n_petal]));
+  return reply_buffer;
+}
+
+char *GetDebugInfo(int n_petal) {
+  snprintf(reply_buffer, REPLY_BUF_LEN, "Mot.#%d [pul.pin:%d, dir.pin:%d, lsw.pin:%d] - pulse:%d, direc:%d, pos:%d, lsw:%d", 
            n_petal, motor_pulse_pin[n_petal], motor_direction_pin[n_petal], motor_limit_switch_pin[n_petal],
-           motor_pulse_on[n_petal], digitalRead(motor_direction_pin[n_petal]), motor_position[n_petal], GetLimitSwitch(n_petal));
-  return debug_buffer;
+           motor_pulse_on[n_petal], digitalRead(motor_direction_pin[n_petal]), motor_position[n_petal], digitalRead(motor_limit_switch_pin[n_petal]));
+  return reply_buffer;
 }

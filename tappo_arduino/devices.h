@@ -1,7 +1,5 @@
 
-int GetPosition(int n_petal);       // get motor position
-int GetDirection(int n_petal);      // get motor direction (-1, 0, 1)
-int GetLimitSwitch(int n_petal);    // get limit switch status (1: open, 0: closed)
+char *GetPetalStatus(int n_petal);    // get status of petal: M, D, P, L
 
 void MotorControl(int n_motor);     // update motor status
                                     
@@ -18,4 +16,4 @@ void SetupMotors();                 // Setup motors
 void SetMaxPosition(int value);
 int GetMaxPosition();
 
-char *GetMotorInfo(int n_petal);
+char *GetDebugInfo(int n_petal);
