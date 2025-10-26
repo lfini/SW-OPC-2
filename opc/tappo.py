@@ -14,14 +14,8 @@ import sys
 import time
 from threading import Thread, Lock
 import serial
+from serial.tools.list_ports import comports
 
-
-if sys.platform == "linux":
-    TTY = "/dev/ttyACM0"
-elif sys.platform == "win32":
-    TTY = "COM5"
-else:
-    raise RuntimeError(f"{sys.platform} non supportato")
 
 HOMING_TIMEOUT = 30  # Timeout in secondi per homing/chiusura
 OPENING_TIMEOUT = 30  # Timeout in secondi per apertura
@@ -102,24 +96,45 @@ def _debug(text):
         print("DBG>", text)
 
 
-def init_serial():
+def init_serial(tty):
     "initialize serial communication"
+    _debug(f"Trying: {tty}")
     try:
-        GLOB.serial = serial.Serial(TTY, SPEED, timeout=1)
+        GLOB.serial = serial.Serial(tty, SPEED, timeout=1)
     except:  # pylint: disable=W0702
-        GLOB.status = ERROR
-        GLOB.connected = False
+        return ""
+    time.sleep(2)    # wait controller setup
+    ident = send_command("v")
+    if "Tappo" in ident:
+        return ident
+    GLOB.serial = None
+    return ""
+
+
+def find_tty():
+    "find serial line"
+    _debug("Looking for connected controller")
+    if sys.platform == 'linux':
+        template = "tty"
+    elif sys.platform == 'win32':
+        template = "COM"
     else:
-        GLOB.connected = True
-        time.sleep(3)
-        GLOB.status = CONNECTED
-    return GLOB.connected
+        raise RuntimeError(f"Not supported: {sys.platform}")
+    ports = comports()
+    device = None
+    ident = ""
+    for port in ports:
+        if template in port.description:
+            ident = init_serial(port.device)
+            if ident:
+                device = port.device
+                break
+    _debug(f"tty found: {device}")
+    return ident
 
 
 def send_command(cmd):
     "send command to shutter controlleri, Return full reply"
-    if not GLOB.connected:
-        return E05
     tcmd = ("!" + cmd + ":").encode("ascii")
     _debug(f"sending command: {tcmd}")
     with GLOB.lock:
@@ -139,7 +154,7 @@ def _do_homing(nptl):
     "procedura di homing di un petalo da lanciare in un thread"
     GLOB.petal_status[nptl] = HOMING
     spos = send_command("c" + str(nptl))
-    if spos.startswith("ERR"):
+    if spos.startswith("E"):
         GLOB.petal_status[nptl] = ERROR
         return
     timeout = HOMING_TIMEOUT
@@ -147,7 +162,7 @@ def _do_homing(nptl):
         timeout -= 1
         time.sleep(1)
         status = send_command("p" + str(nptl))
-        if status.startswith("ERR"):
+        if status.startswith("E"):
             GLOB.petal_status[nptl] = ERROR
             return
         pos0 = int(status.split(",")[2])
@@ -175,7 +190,7 @@ def _do_open(nptl):
         time.sleep(1)
         timeout -= 1
         status = send_command("p" + str(nptl))
-        if status.startswith("ERR"):
+        if status.startswith("E"):
             GLOB.petal_status[nptl] = ERROR
             return
         params = status.split(",")
@@ -262,10 +277,9 @@ def main():
         sys.exit()
     GLOB.debug = "-d" in sys.argv
     print("inizializzazione linea seriale")
-    stat = init_serial()
+    ident = find_tty()
     print()
-    if stat:
-        ident = send_command("v:").strip()
+    if ident:
         print("Controllore connesso:", ident)
     else:
         print("Errore: controllore non connesso")
