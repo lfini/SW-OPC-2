@@ -12,27 +12,33 @@ dove:
 
 import sys
 import time
-from threading import Thread, Lock
 import serial
 from serial.tools.list_ports import comports
 
+__version__ = "1.0"
+__author__ = "Luca Fini"
+__date__ = "26/10/2025"
 
-HOMING_TIMEOUT = 30  # Timeout in secondi per homing/chiusura
-OPENING_TIMEOUT = 30  # Timeout in secondi per apertura
+##################### Valori da aggiustare in base
+                    # alla configurazione di Arduino
+MAX_ANGLE = 150     # impostazione angolo massimo (in steps)
+TO_DEGREES = 1.8    # Converte step in gradi
+SPEED = 9600        # Velocità linea seriale
+#####################
 
-SPEED = 9600
-
+############### Codici di stato/errore
 SUCCESS = "Ok"
 
-HOMING = "Homing/In chiusura"
-ERROR = "Errore"
-TIMEOUT = "Timeout"
-CONNECTED = "Connesso"
-OPENING = "In Apertura"
 CLOSED = "Chiuso"
+CLOSING = "Closing"
+CONNECTED = "Connesso"
+ERROR = "Errore"
 OPEN = "Aperto"
-
-E05 = "E05"
+OPENING = "In Apertura"
+STOPPED = "Fermo"
+UNCONNECTED = "Non connesso"
+UNKNOWN = "Sconosciuto"
+######################################
 
 HELP = """
  Comandi di interrogazione:
@@ -57,6 +63,10 @@ HELP = """
 
  dN   aaaa       Legge informazioni su stato petalo N
  n    xxxx       Legge numero di comandi ricevuti
+
+ Comando per tentativo riconnessione:
+
+ r    Ok/errore
 """
 
 WARNING = """
@@ -75,18 +85,14 @@ REPLIES = {
     "E02": "Massimo valore angolo illegale",
     "E03": "Errore esecuzione comando",
     "E04": "Comando non riconosciuto",
-    E05: "Controller non connesso",
+    "E05": "Controller non connesso"
 }
 
 
 class GLOB:  # pylint: disable=R0903
     "global variables"
-    connected = False
     debug = False
     serial = None
-    petal_status = [""] * 4
-    petal_position = [None] * 4
-    lock = Lock()
     max_angle = 0
 
 
@@ -96,23 +102,44 @@ def _debug(text):
         print("DBG>", text)
 
 
+def send_command(cmd):
+    "send command to shutter controlleri, Return full reply"
+    tcmd = ("!" + cmd + ":").encode("ascii")
+    _debug(f"sending command: {tcmd}")
+    try:
+        GLOB.serial.write(tcmd)
+        line = GLOB.serial.readline()
+    except:           #pylint: disable=W0702
+        ret = "E05"
+    else:
+        ret = line.decode("utf8").strip()
+    _debug(f"command returns: {ret}")
+    return ret
+
+
 def init_serial(tty):
     "initialize serial communication"
     _debug(f"Trying: {tty}")
     try:
         GLOB.serial = serial.Serial(tty, SPEED, timeout=1)
     except:  # pylint: disable=W0702
-        return ""
+        return "E05"
     time.sleep(2)    # wait controller setup
     ident = send_command("v")
     if "Tappo" in ident:
         return ident
+    try:
+        GLOB.serial.close()
+    except:  # pylint: disable=W0702
+        pass
     GLOB.serial = None
-    return ""
+    return "E05"
 
+
+################### funzioni per controllo
 
 def find_tty():
-    "find serial line"
+    "find and open serial line "
     _debug("Looking for connected controller")
     if sys.platform == 'linux':
         template = "tty"
@@ -120,28 +147,25 @@ def find_tty():
         template = "COM"
     else:
         raise RuntimeError(f"Not supported: {sys.platform}")
+    GLOB.init = False
+    GLOB.serial = None
     ports = comports()
     device = None
     ident = ""
     for port in ports:
         if template in port.description:
             ident = init_serial(port.device)
-            if ident:
+            if not ident.startswith("E"):
                 device = port.device
+                send_command(f"A{MAX_ANGLE}")
+                GLOB.max_angle = MAX_ANGLE
+                GLOB.homed = False
                 break
-    _debug(f"tty found: {device}")
+    if device is not None:
+        _debug(f"tty found: {device}. Angolo Max.: {send_command('a')}")
+    else:
+        _debug("tty NOT found")
     return ident
-
-
-def send_command(cmd):
-    "send command to shutter controlleri, Return full reply"
-    tcmd = ("!" + cmd + ":").encode("ascii")
-    _debug(f"sending command: {tcmd}")
-    with GLOB.lock:
-        GLOB.serial.write(tcmd)
-        line = GLOB.serial.readline()
-    _debug(f"command returns: {line}")
-    return line.decode("utf8").strip()
 
 
 def set_debug(enable=True):
@@ -149,83 +173,60 @@ def set_debug(enable=True):
     GLOB.debug = enable
 
 
-#############################à funzioni di supporto
-def _do_homing(nptl):
-    "procedura di homing di un petalo da lanciare in un thread"
-    GLOB.petal_status[nptl] = HOMING
-    spos = send_command("c" + str(nptl))
-    if spos.startswith("E"):
-        GLOB.petal_status[nptl] = ERROR
-        return
-    timeout = HOMING_TIMEOUT
-    while timeout:
-        timeout -= 1
-        time.sleep(1)
-        status = send_command("p" + str(nptl))
-        if status.startswith("E"):
-            GLOB.petal_status[nptl] = ERROR
-            return
-        pos0 = int(status.split(",")[2])
-        if pos0 == 0:
-            GLOB.petal_status[nptl] = CLOSED
-            return
-    GLOB.petal_status[nptl] = TIMEOUT
+def get_status(nptl):
+    "riporta lo stato del petalo dato: (stato, posizione)"
+    if GLOB.serial is None:
+        return (UNCONNECTED, 0)
+    if not GLOB.homed:
+        return (CONNECTED, 0)
+    reply = send_command(f"p{nptl}")
+    status = UNKNOWN
+    if reply.startswith("E"):
+        if reply == "E05":
+            status, position = (UNCONNECTED, 0)
+        else:
+            status, position = (ERROR, 0)
+    else:
+        reply = reply.split(",")
+        position = int(reply[2])
+        if reply[0] == "0":
+            if reply[3] == "0":
+                status = CLOSED
+            elif abs(position-GLOB.max_angle) < 2:
+                status = OPEN
+            else:
+                status = STOPPED
+        else:
+            if reply[1] == "1":
+                status = OPENING
+            else:
+                status = CLOSING
+    return (status, position)
 
 
-def _do_open(nptl):
-    "funzione apertura del petalo da lanciare in un thread"
-    spos = send_command("a")
-    if spos.startswith("E"):
-        GLOB.status = ERROR
-        return
-    max_angle = int(spos)
-
-    ret = send_command(f"o{nptl}")
-    if ret != SUCCESS:
-        GLOB.petal_status[nptl] = ERROR
-        return
-    GLOB.status = OPENING
-    timeout = OPENING_TIMEOUT
-    while timeout:
-        time.sleep(1)
-        timeout -= 1
-        status = send_command("p" + str(nptl))
-        if status.startswith("E"):
-            GLOB.petal_status[nptl] = ERROR
-            return
-        params = status.split(",")
-        pos = int(params[2])
-        GLOB.petal_position[nptl] = pos
-        moving = int(params[0])
-        if abs(pos - max_angle) < 5 and not moving:
-            GLOB.petal_status[nptl] = OPEN
-            return
-    GLOB.petal_status[nptl] = TIMEOUT
-    return
+def stop():
+    "interrompe movimento dei quattro petali"
+    send_command("S")
 
 
-########## Funzioni complesse
+def start_homing():
+    "Lancia procedura di homing/chiusura dei quatttro petali"
+    ret = [send_command(f"c{x}") for x in range(4)]
+    GLOB.homed = True
+    return ret
 
 
-def do_open():
-    "apertura tappo"
-    print("inizio procedura di apertura")
-    send_command("A150")
-    print("Angolo massimo impostato a 150 step")
-    for n_petal in range(4):
-        thread = Thread(target=_do_open, args=(n_petal,))
-        thread.start()
+def start_opening():
 
-    while True:
-        time.sleep(1)
-        for n_petal in range(4):
-            print(
-                f"Stato petalo {n_petal}: {GLOB.petal_status[n_petal]}",
-                f"- Pos.: {GLOB.petal_position[n_petal]}"
-            )
-        if all(GLOB.petal_status[i] in (OPEN, ERROR, TIMEOUT) for i in range(4)):
-            break
+    "Lancia procedura di chiusura"
+    ret = [send_command(f"o{x}") for x in range(4)]
+    return ret
 
+def max_angle():
+    "Riporta valore angolo massimo"
+    return GLOB.max_angle
+
+########## Funzioni per test
 
 def manual_commands():
     "invio comandi in modo manuale"
@@ -237,7 +238,10 @@ def manual_commands():
             continue
         if cmd[:1] == "q":
             break
-        ret = send_command(cmd)
+        if cmd[:1] == "r":
+            ret = find_tty()
+        else:
+            ret = send_command(cmd)
         long = REPLIES.get(ret, "")
         if long:
             print("REPLY:", ret, "-", long)
@@ -245,19 +249,46 @@ def manual_commands():
             print("REPLY:", ret)
 
 
-def do_homing():
-    "Esegui procedura di homing (chiusura) del tappo"
-    print("inizio procedura di homing")
-    threads = [None] * 4
-    for n_petal in range(4):
-        threads[n_petal] = Thread(target=_do_homing, args=(n_petal,))
-        threads[n_petal].start()
+def do_open():
+    "apertura tappo"
+    print("inizio procedura di apertura")
+    rets = start_opening()
+
+    for  nptl, ret in enumerate(rets):
+        print(f" - petalo #{nptl}: {ret}")
+
+    if any(x.startswith("E") for x in rets):
+           return
 
     while True:
         time.sleep(1)
-        for n_petal in range(4):
-            print(f"Stato petalo {n_petal}: {GLOB.petal_status[n_petal]}")
-        if all(GLOB.petal_status[i] in (CLOSED, ERROR, TIMEOUT) for i in range(4)):
+        stat4 = []
+        for nptl in range(4):
+            stat = get_status(nptl)
+            print(f"Stato petalo {nptl}: {stat[0]} - Pos.: {stat[1]}")
+            stat4.append(stat[0])
+        if all(x in (OPEN, ERROR, UNCONNECTED) for x in stat4):
+            break
+
+def do_close():
+    "Esegui procedura di homing/chiusura del tappo"
+    print("inizio procedura di chiusura/homing")
+    rets = start_homing()
+
+    for  nptl, ret in enumerate(rets):
+        print(f" - petalo #{nptl}: {ret}")
+
+    if any(x.startswith("E") for x in rets):
+           return
+
+    while True:
+        time.sleep(1)
+        stat4 = []
+        for nptl in range(4):
+            stat = get_status(nptl)
+            stat4.append(stat[0])
+            print(f"Stato petalo {nptl}: {stat[0]} - Pos.: {stat[1]}")
+        if all(x in (CLOSED, ERROR, UNCONNECTED) for x in stat4):
             break
 
 
@@ -281,6 +312,8 @@ def main():
     print()
     if ident:
         print("Controllore connesso:", ident)
+        maxa = send_command("a")
+        print(f"Angolo massimo impostato a {maxa} step")
     else:
         print("Errore: controllore non connesso")
         sys.exit()
@@ -291,7 +324,7 @@ def main():
         if ans == "m":
             manual_commands()
         elif ans == "h":
-            do_homing()
+            do_close()
         elif ans == "a":
             do_open()
         elif ans == "q":
