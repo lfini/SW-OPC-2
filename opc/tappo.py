@@ -30,11 +30,11 @@ SPEED = 9600        # Velocità linea seriale
 SUCCESS = "Ok"
 
 CLOSED = "Chiuso"
-CLOSING = "Closing"
+CLOSING = "In chiusura"
 CONNECTED = "Connesso"
 ERROR = "Errore"
 OPEN = "Aperto"
-OPENING = "In Apertura"
+OPENING = "In apertura"
 STOPPED = "Fermo"
 UNCONNECTED = "Non connesso"
 UNKNOWN = "Sconosciuto"
@@ -81,7 +81,7 @@ comando al controller del tappo.
 REPLIES = {
     "Ok": "Comando eseguito",
     "E00": "Valore max angolo non impostato",
-    "E01": "Indice motore errato",
+    "E01": "Indice petalo errato",
     "E02": "Massimo valore angolo illegale",
     "E03": "Errore esecuzione comando",
     "E04": "Comando non riconosciuto",
@@ -159,7 +159,7 @@ def find_tty():
                 device = port.device
                 send_command(f"A{MAX_ANGLE}")
                 GLOB.max_angle = MAX_ANGLE
-                GLOB.homed = False
+                GLOB.homed = [False] * 4
                 break
     if device is not None:
         _debug(f"tty found: {device}. Angolo Max.: {send_command('a')}")
@@ -177,7 +177,7 @@ def get_status(nptl):
     "riporta lo stato del petalo dato: (stato, posizione)"
     if GLOB.serial is None:
         return (UNCONNECTED, 0)
-    if not GLOB.homed:
+    if not GLOB.homed[nptl]:
         return (CONNECTED, 0)
     reply = send_command(f"p{nptl}")
     status = UNKNOWN
@@ -209,18 +209,17 @@ def stop():
     send_command("S")
 
 
-def start_homing():
-    "Lancia procedura di homing/chiusura dei quatttro petali"
-    ret = [send_command(f"c{x}") for x in range(4)]
-    GLOB.homed = True
+def start_homing(nptl):
+    "Lancia procedura di homing/chiusura di un petalo"
+    ret = send_command(f"c{nptl}")
+    GLOB.homed[nptl] = True
     return ret
 
 
-def start_opening():
+def start_opening(nptl):
+    "Lancia procedura di apertura del petalo dato"
+    return send_command(f"o{nptl}")
 
-    "Lancia procedura di chiusura"
-    ret = [send_command(f"o{x}") for x in range(4)]
-    return ret
 
 def max_angle():
     "Riporta valore angolo massimo"
@@ -252,7 +251,7 @@ def manual_commands():
 def do_open():
     "apertura tappo"
     print("inizio procedura di apertura")
-    rets = start_opening()
+    rets = [start_opening(x) for x in range(4)]
 
     for  nptl, ret in enumerate(rets):
         print(f" - petalo #{nptl}: {ret}")
@@ -273,7 +272,7 @@ def do_open():
 def do_close():
     "Esegui procedura di homing/chiusura del tappo"
     print("inizio procedura di chiusura/homing")
-    rets = start_homing()
+    rets = [start_homing(x) for x in range(4)]
 
     for  nptl, ret in enumerate(rets):
         print(f" - petalo #{nptl}: {ret}")
