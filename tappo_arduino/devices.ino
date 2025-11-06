@@ -63,14 +63,15 @@ void MotorControl(int n_petal) { // update motor status, generating pulses
   if(motor_pulse_on[n_petal]) {                         // motor is running
     if(digitalRead(motor_pulse_pin[n_petal]) == HIGH)   // generate pulses
       digitalWrite(motor_pulse_pin[n_petal], LOW);
-    else 
+    else {
       digitalWrite(motor_pulse_pin[n_petal], HIGH);
-    if(closing) {
+      if(closing)
         motor_position[n_petal]--;
-    } else {
+      else
         motor_position[n_petal]++;
     }
-  }
+  } else
+    digitalWrite(motor_pulse_pin[n_petal], LOW);
 }
 
 bool OpenPetal(int n_petal){       // Start opening petal
