@@ -49,7 +49,8 @@ void MotorControl(int n_petal) { // update motor status, generating pulses
   bool closing = motor_pulse_on[n_petal] && (digitalRead(motor_direction_pin[n_petal]) == CLOSE);
   bool opening = motor_pulse_on[n_petal] && (digitalRead(motor_direction_pin[n_petal]) == OPEN);
   if(closing) {
-    if(digitalRead(motor_limit_switch_pin[n_petal]) == LOW) {  // control stop at closed position
+    if(digitalRead(motor_limit_switch_pin[n_petal]) == HIGH) {  // control stop at closed position
+                                                                // limit switch is usually closed
       motor_pulse_on[n_petal] = 0;
       motor_position[n_petal] = 0;
       digitalWrite(motor_pulse_pin[n_petal], LOW);
@@ -99,7 +100,7 @@ bool ClosePetal(int n_petal){     // Starts closing petal
                                   // returns true on success
   if(motor_pulse_on[n_petal])
     return false;
-  if(digitalRead(motor_limit_switch_pin[n_petal]) == LOW) {
+  if(digitalRead(motor_limit_switch_pin[n_petal]) == HIGH) {  // limit switch is usually closed
     motor_position[n_petal] = 0;
     return true;
   }
