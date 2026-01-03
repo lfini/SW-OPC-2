@@ -45,6 +45,7 @@ HELP = """
  Comandi di movimento:
 
  Cod. Risposta  Descrizione
+ 0N    errcod    Imposta posizione corrente come 0
  oNxxx errcod    muove petalo N di xxx passi in direzione "apertura"
  cNxxx errcod    muove petalo N di xxx passi in direzione "chiusura"
  gNxxx errcod    muove petalo N a posizione assoluta

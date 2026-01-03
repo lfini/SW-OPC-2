@@ -27,6 +27,7 @@
 // Comandi di movimento:
 //
 // Cod. Risposta  Descrizione
+// 0N    errcod    Imposta posizione corrente come 0
 // oNxxx errcod    muove petalo N di xxx passi in direzione "apertura"
 // cNxxx errcod    muove petalo N di xxx passi in direzione "chiusura"
 // gNxxx errcod    muove petalo N a posizione assoluta
@@ -200,6 +201,11 @@ void ExecCommandInternal() {          // actual command executor
       Serial.println(SUCCESS);
       return;
     };
+    case '0': {
+      motors[n_petal].setCurrentPosition(0);
+      Serial.println(SUCCESS);
+      return;
+    }
     case 'M': {
       long value = atol(command_buffer+2);
       max_position[n_petal] = value;
