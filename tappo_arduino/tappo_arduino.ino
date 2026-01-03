@@ -1,3 +1,4 @@
+
 // Comandi definiti per il sistema di controllo
 // Ogni comando è costituito da una stringa compresa fra un carattere '!' (inizio)
 // e un carattere ':' (fine comando)
@@ -6,63 +7,70 @@
 //
 // Comandi di interrogazione:
 //
-// Cod. Risposta   Descrizione
-// v    xxxxxxx    Identificazione (numero di versione del firmware)
-// pN   m,d,p      Stato petalo. m: in moto/fermo, d: direzione moto, p:posizione
+// Cod. Risposta  Descrizione
+// a    x,y,z,a   Accelerazione per i quattro petali
+// i    xxxxxxx   Identificazione (numero di versione del firmware)
+// m    x,y,z,a   Angolo max per i quattro petali
+// p    x,y,z,a   Posizione dei 4 petali
+// s    x,y,z,a   Velocità corrente per i quattro petali
+// v    x,y,z,a   Velocità max per i quattro petali
+// w    x,y,z,a   Stato limit switch (1: chiuso, 0: aperto)
 
-// a    xxxx       Legge valore angolo massimo (in step dalla posizione chiuso)
 
-// Comandi operativi:
+// Comandi di impostazione valori:
 //
-// Cod. Risposta   Descrizione
-// oN   Ok/errore   Apri petalo N (inizia movimento in apertura)
-// cN   Ok/errore   Chiudi petalo N (inzia movimento in chiusura)
-// Axxx ang/errore  Imposta valore massimo angolo (in num di step) raggiungibile.
-// sN   Ok/errore   Stop (interrompe movimento del..) petalo N
-// S    Ok/errore   Stop tutti i motori
+// Cod. Risposta  Descrizione
+// MNxxx errcod   Imposta valore massimo angolo (in num di step) raggiungibile per petalo N
+// ANxxx errcod   Imposta valore accelerazione (steps/sec^2) per petalo N
+// VNxxx errcod   Imposta valore velocità massima per petalo N
 
-// Comandi per debug:
+// Comandi di movimento:
+//
+// Cod. Risposta  Descrizione
+// oNxxx errcod    muove petalo N di xxx passi in direzione "apertura"
+// cNxxx errcod    muove petalo N di xxx passi in direzione "chiusura"
+// gNxxx errcod    muove petalo N a posizione assoluta
+// xN    errcod    Stop (interrompe movimento del..) petalo N
+// X     errcod    Stop tutti i petali
 
-// dN   aaaa       Legge informazioni su stato petalo N utile per debug
-// n    xxxx       Legge numero di comandi ricevuti
-// r    Ok/errore  Reinizializza stato motori
-
-// Nota: le funzioni di controllo devono agire automaticamente
-//       interrompendo il moto quando si chiude lo switch di fine
-//       corsa o quando viene raggiunto l'angolo massimo di apertura
-
+#include <AccelStepper.h>
 #include "config.h"
-#include "devices.h"
 
-#define REFRESH_INTERVAL 500      // LED refresh inrterval
+#define BUF_LEN 22
+#define REPLY_BUF_LEN 100
 
-#define BUF_LEN 11
+#define MOTOR_IF_TYPE AccelStepper::DRIVER
 
-char *ident = "Tappo OPC v. 1.0";
+char *ident = "Tappo OPC v. 2.1";
 
-//                         Error codes
-char *success = "Ok";   // success
-char *err00 = "E00";    // Max angle not initialized
-char *err01 = "E01";    // wrong petal/motor index
-char *err02 = "E02";    // Wrong motor max angle
-char *err03 = "E03";    // command execution error
-char *err04 = "E04";    // unrecognized command
+static char reply_buffer[REPLY_BUF_LEN+1];
+static char command_buffer[BUF_LEN+1];
 
-int ncommands = 0;
-
-unsigned char command_buffer[BUF_LEN+1];
 int char_ix = 0;
 bool command_ready = false;
 bool command_empty = true;
 
-unsigned long motor_timer = 0;
+AccelStepper motors[] = {AccelStepper(MOTOR_IF_TYPE, M0_PULSE_PIN, M0_DIRECTION_PIN),
+                         AccelStepper(MOTOR_IF_TYPE, M1_PULSE_PIN, M1_DIRECTION_PIN),
+                         AccelStepper(MOTOR_IF_TYPE, M2_PULSE_PIN, M2_DIRECTION_PIN),
+                         AccelStepper(MOTOR_IF_TYPE, M3_PULSE_PIN, M3_DIRECTION_PIN)};
+
+long max_position[4];
 
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(9600);
-  ncommands = 0;
-  SetupMotors();
-  InitMotors(); 
+  pinMode(ENABLE_PIN, OUTPUT);    // configure enable pin
+  pinMode(M0_LIMIT_SWITCH_PIN, INPUT_PULLUP);
+  pinMode(M1_LIMIT_SWITCH_PIN, INPUT_PULLUP);
+  pinMode(M2_LIMIT_SWITCH_PIN, INPUT_PULLUP);
+  pinMode(M3_LIMIT_SWITCH_PIN, INPUT_PULLUP);
+  digitalWrite(ENABLE_PIN, LOW);  // enable CNC Shield
+  for(int i=0; i<4; i++) {
+    motors[i].setMaxSpeed(DEFAULT_MAX_SPEED);
+    motors[i].setAcceleration(DEFAULT_ACCELERATION);
+    max_position[i] = DEFAULT_MAX_POSITION;
+  };
   ClearCommandBuffer(); 
 };
 
@@ -78,14 +86,13 @@ void GetCommand() {               // Called from within the loop to
       if(next_char == ':') {
         command_buffer[char_ix] = '\0';
         command_ready = true;
-        ncommands++;
       } else {
         command_buffer[char_ix] = next_char;
         if(char_ix < BUF_LEN) char_ix++;
-      }
-    }
-  }
-}
+      };
+    };
+  };
+};
 
 void ClearCommandBuffer() {  // clear command buffer
   char_ix = 0;
@@ -100,111 +107,131 @@ int DigitToInt(char achar) {   // convert digit character in int 0..3
   return val;
 }
 
+static char* command_list = "aimpsvwMAVocgxX";
+
 void ExecCommandInternal() {          // actual command executor
   char cmd = command_buffer[0];
-  if(cmd == 'S') {
-    StopMotor(0);
-    StopMotor(1);
-    StopMotor(2);
-    StopMotor(3);
-    Serial.println(success);
-    return;
-  }
-  if(cmd == 'A') {
-    int value = atoi(command_buffer+1);
-    if(value >= 0) {
-      SetMaxPosition(value);
-      Serial.println(success);
-    } else
-      Serial.println(err02);
-    return;
-  }
-  if(cmd == 'a') {
-    Serial.println(GetMaxPosition());
-    return;
-  }
-  if(cmd == 'v') {
-    Serial.println(ident);
-    return;
-  }
-  if(cmd == 'n') {
-    Serial.println(ncommands);
-    return;
-  }
+//Serial.println(command_buffer);
+  long lbuf[4];
+  float fbuf[4];
+  switch(cmd) {
+    case 'X': {
+      for(int n=0; n<4; n++) motors[n].stop();
+      Serial.println(SUCCESS);
+      return;
+    };
+    case 'p': {
+      for(int i=0; i<4; i++) lbuf[i] = motors[i].currentPosition();
+      Serial.print(lbuf[0]); Serial.print(','); Serial.print(lbuf[1]); Serial.print(',');
+      Serial.print(lbuf[2]); Serial.print(','); Serial.println(lbuf[3]);
+      return;
+    };
+    case 'w': {
+      Serial.print(digitalRead(M0_LIMIT_SWITCH_PIN)); Serial.print(',');
+      Serial.print(digitalRead(M1_LIMIT_SWITCH_PIN)); Serial.print(',');
+      Serial.print(digitalRead(M2_LIMIT_SWITCH_PIN)); Serial.print(',');
+      Serial.println(digitalRead(M3_LIMIT_SWITCH_PIN));
+      return;
+    };
+    case 's': {
+      for(int i=0; i<4; i++) fbuf[i] = motors[i].speed();
+      Serial.print(fbuf[0]); Serial.print(','); Serial.print(fbuf[1]); Serial.print(',');
+      Serial.print(fbuf[2]); Serial.print(','); Serial.println(fbuf[3]);
+      return;
+    };
+    case 'v': {
+      for(int i=0; i<4; i++) fbuf[i] = motors[i].maxSpeed();
+      Serial.print(fbuf[0]); Serial.print(','); Serial.print(fbuf[1]); Serial.print(',');
+      Serial.print(fbuf[2]); Serial.print(','); Serial.println(fbuf[3]);
+      return;
+    };
+    case 'a': {
+      for(int i=0; i<4; i++) fbuf[i] = motors[i].acceleration();
+      Serial.print(fbuf[0]); Serial.print(','); Serial.print(fbuf[1]); Serial.print(',');
+      Serial.print(fbuf[2]); Serial.print(','); Serial.println(fbuf[3]);
+      return;
+    };
+    case 'm': {
+      for(int i=0; i<4; i++) lbuf[i] = max_position[i];
+      Serial.print(lbuf[0]); Serial.print(','); Serial.print(lbuf[1]); Serial.print(',');
+      Serial.print(lbuf[2]); Serial.print(','); Serial.println(lbuf[3]);
+      return;
+    };
+    case 'i': {
+      Serial.println(ident);
+      return;
+    };
+  };
   
   int n_petal = DigitToInt(command_buffer[1]); // Convert argument value
-
-  if(cmd == 's') {
-    if(n_petal < 0) {
-      Serial.println(err01);
-      return;
-    }
-    if(StopMotor(n_petal))
-      Serial.println(success);
+  if(n_petal < 0) {
+    if(strchr(command_list, cmd))
+      Serial.println(WRONG_ID);
     else
-      Serial.println(err03);
+      Serial.println(ILL_CMD);
     return;
-  }
-  if(cmd == 'p') {
-    if(n_petal < 0)
-      Serial.println(err01);
-    else
-      Serial.println(GetPetalStatus(n_petal));
-    return;
-  }
-  if(cmd == 'c') {
-    if(n_petal < 0) {
-      Serial.println(err01);
+  };
+  switch(cmd) {
+    int errcod;
+    case 'x': {
+      motors[n_petal].stop();
+      Serial.println(SUCCESS);
       return;
-    }
-    if(ClosePetal(n_petal))
-      Serial.println(success);
-    else
-      Serial.println(err03);
-    return;
-  }
-  if(cmd == 'o') {
-    if(n_petal < 0) {
-      Serial.println(err01);
+    };
+    case 'c': {
+      long value = -atol(command_buffer+2);
+      motors[n_petal].move(value);
+      Serial.println(SUCCESS);
       return;
-    }
-    if(GetMaxPosition() <= 0) {
-      Serial.println(err00);
+    };
+    case 'o': {
+      long value = atol(command_buffer+2);
+      motors[n_petal].move(value);
+      Serial.println(SUCCESS);
       return;
-    }
-    if(OpenPetal(n_petal))
-      Serial.println(success);
-    else
-      Serial.println(err03);
-    return;
-  }
-  if(cmd == 'd') {
-    if(n_petal < 0) {
-      Serial.println(err01);
+    };
+    case 'g': {
+      long value = atol(command_buffer+2);
+      if(value < 0 || value > max_position[n_petal]) {
+        Serial.println(LIMIT);
+        return;
+      };
+      motors[n_petal].moveTo(value);
+      Serial.println(SUCCESS);
       return;
-    }
-    Serial.println(GetDebugInfo(n_petal));
-    return;
-  }
-  Serial.println(err04);
-}
+    };
+    case 'M': {
+      long value = atol(command_buffer+2);
+      max_position[n_petal] = value;
+      Serial.println(SUCCESS);
+     return;
+    };
+    case 'A': {
+      float accel = atof(command_buffer+2);
+      motors[n_petal].setAcceleration(accel);
+      Serial.println(SUCCESS);
+      return;
+    };
+    case 'V': {
+      float speedmax = atof(command_buffer+2);
+      motors[n_petal].setMaxSpeed(speedmax);
+      Serial.println(SUCCESS);
+      return;
+    };
+    default:
+      Serial.println(ILL_CMD);
+  };
+};
 
 void ExecCommand() {              // Execute the command from command buffer,
-  if(command_ready){              // reset command buffer and retrurn reply
+  if(command_ready) {             // reset the command buffer
     ExecCommandInternal();
     ClearCommandBuffer();
-  }
-}
+  };
+};
 
 void loop() {
-  unsigned long now = millis();
-  if(now >= motor_timer) {
-    MotorControl(0);
-    MotorControl(1);
-    MotorControl(2);
-    MotorControl(3);    
-    motor_timer = now+MOTOR_HALF_PERIOD;
-  }
+  for(int i=0; i<4; i++) motors[i].run();
   GetCommand();
   ExecCommand();
-}
+};

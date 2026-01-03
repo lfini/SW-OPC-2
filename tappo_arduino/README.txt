@@ -2,11 +2,7 @@ Software di controllo per tappo telescopio.
 
 - questa directory contiene il codice del firmware per Arduino.
 
-- il file tappo.py nella cartella "opc" implementa una semplice interfaccia python
-  per inviare comandi al controller via seriale.
-
-- L'interfaccia grafica si trova nel file "tappo_gr.py" nella directory "gui"
-
+- il file test_tappo.py contiene la proxcedura di test.
 
 Per il test del firmware del controller si possono usare i comandI:
 
@@ -21,7 +17,7 @@ Y step/dir = pin 3/6
 Z step/dir = pin 4/7
 A step/dir = pin 12/13 ma bisogna collegare con jumpers D12 e D13 (blu/giallo)
 
-ENABLE = pin 8 (per averlo permanentemente enabled, jumper su EN/GND)
+ENABLE = pin 8  (abilitabile da software)
 
 FINE CORSA headers bianco/neri (nero tutto GND):
 X+ = X- = 9

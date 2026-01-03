@@ -1,12 +1,6 @@
-/*
- * Valori relativi alle connessioni:
- *
- * motore  controller
- *    A      B1
- *    B      A2
- *    C      A1
- *    D      B2
- */
+#ifndef config_h
+#define config_h
+
 
 #define M0_DIRECTION_PIN 5    // asse X
 #define M1_DIRECTION_PIN 6    // asse Y
@@ -23,8 +17,25 @@
 #define M2_LIMIT_SWITCH_PIN 16
 #define M3_LIMIT_SWITCH_PIN 17
 
-#define OPEN HIGH     // Direzione apertura (Senso antiorario dal lato asse)
-#define CLOSE LOW     // Direzione chiusura (Senso orario dal lato asse) 
+#define ENABLE_PIN  8
 
-#define MOTOR_HALF_PERIOD 100  //(millisec): La velocità del motore risulta
-			       // 5 passi al secondo o 9°/sec
+
+/*  Valori default per microstepping 1/4
+#define DEFAULT_MAX_POSITION 54000  // Angolo massimo (step: corrisponde a 270°)
+#define DEFAULT_MAX_SPEED     1400  // Velocità max (step/sec: corrisponde a 9°/sec)
+#define DEFAULT_ACCELERATION   200  // Accelerazione (step/sec^2)
+*/
+
+//  Valori di default per NO microstepping
+#define DEFAULT_MAX_POSITION 13500  // Angolo massimo (step: corrisponde a 270°)
+#define DEFAULT_MAX_SPEED      450  // Velocità max (step/sec: corrisponde a 9°/sec)
+#define DEFAULT_ACCELERATION    60  // Accelerazione (sep/sec^2)
+
+//                  codici di errore
+#define SUCCESS  0    // successo     
+#define WRONG_ID 1    // Errore numero petalo
+#define NO_EXE   2    // Comando non eseguibile (motore in moto)
+#define LIMIT    3    // Comando non eseguibile (intervento limite)
+#define ILL_CMD  4    // Comando non riconosciuto
+
+#endif
