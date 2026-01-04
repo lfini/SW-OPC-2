@@ -20,16 +20,16 @@
 #define ENABLE_PIN  8
 
 
-/*  Valori default per microstepping 1/4
+//  Valori default per microstepping 1/4
 #define DEFAULT_MAX_POSITION 54000  // Angolo massimo (step: corrisponde a 270°)
 #define DEFAULT_MAX_SPEED     1400  // Velocità max (step/sec: corrisponde a 9°/sec)
 #define DEFAULT_ACCELERATION   200  // Accelerazione (step/sec^2)
-*/
 
-//  Valori di default per NO microstepping
+/*  Valori di default per NO microstepping
 #define DEFAULT_MAX_POSITION 13500  // Angolo massimo (step: corrisponde a 270°)
 #define DEFAULT_MAX_SPEED      450  // Velocità max (step/sec: corrisponde a 9°/sec)
 #define DEFAULT_ACCELERATION    60  // Accelerazione (sep/sec^2)
+*/
 
 //                  codici di errore
 #define SUCCESS  0    // successo     
