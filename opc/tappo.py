@@ -184,12 +184,12 @@ def send_command(cmd):
 
 
 def init_serial(tty):
-    "initialize serial communication"
+    "initialize serial communication. Returns ident string or None"
     _debug(f"Trying: {tty}")
     try:
         GLOB.serial = serial.Serial(tty, TTY_SPEED, timeout=2)
     except:  # pylint: disable=W0702
-        return "9"
+        return None
     time.sleep(2)  # wait controller setup
     _debug("Serial connected")
     ident = send_command("i")
@@ -200,7 +200,7 @@ def init_serial(tty):
     except:  # pylint: disable=W0702
         pass
     GLOB.serial = None
-    return "9"
+    return None
 
 
 ################### funzioni per controllo
@@ -217,18 +217,18 @@ def find_tty():
     GLOB.serial = None
     ports = comports()
     device = None
-    ident = ""
+    ident = None
     for port in ports:
         if template in port.description:
             ident = init_serial(port.device)
-            if not ident.startswith("9"):
+            if ident:
                 device = port.device
                 GLOB.homed = [False] * 4
                 break
-    if device is not None:
+    if ident:
         _debug(f"controller found on tty: {device}")
     else:
-        _debug("tty NOT found")
+        _debug("controller NOT found")
     return ident
 
 
@@ -280,7 +280,7 @@ def home_all():
 def initialize():
     "initialize connection and set home for all petals"
     GLOB.ident = find_tty()
-    if GLOB.ident == "9":
+    if not GLOB.ident:
         GLOB.log("Controllore non connesso")
         return False
     GLOB.log(f"Controllore connesso: {GLOB.ident}")
@@ -349,15 +349,22 @@ def close_all():
     GLOB.log("Errore: petali non aperti")
     return False
 
+def get_position():
+    "Legge posizioni petali"
+    ret = send_command("p")
+    if ret in CODICI_STATO:
+        GLOB.log("Errore lettura posizioni")
+        return (-1, -1, -1, -1)
+    return (int(x) for x in ret.split(","))
 
 def test_comandi(init=True):
     "test comandi elementari"
     if init:
-        print("inizializzazione linea seriale")
-        ident = find_tty()
         print()
-        if ident == "9":
+        ident = find_tty()
+        if not ident:
             print("Errore: controllore non connesso")
+            print()
             sys.exit()
         else:
             print("Controllore connesso:", ident)
@@ -376,6 +383,7 @@ def test_comandi(init=True):
             print("REPLY:", ret, "-", CODICI_STATO[ret])
         else:
             reply(cmd, ret)
+
 
 def test_inizializzazione():
     "prova procedura inizializzazione (+ homing)"
