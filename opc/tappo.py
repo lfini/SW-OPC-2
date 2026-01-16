@@ -21,6 +21,10 @@ NOTA: al termine della procedura complessa selezionata viene attivato il test de
 
 import sys
 import time
+try:
+    import readline     #pylint: disable=W0611
+except:                 #pylint: disable=W0702
+    pass
 import serial
 from serial.tools.list_ports import comports
 
