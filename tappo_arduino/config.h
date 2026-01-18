@@ -17,8 +17,18 @@
 #define M2_LIMIT_SWITCH_PIN 16
 #define M3_LIMIT_SWITCH_PIN 17
 
-#define ENABLE_PIN  8
+//                            //  Pin per comandi manuali
+#define SELECTOR_0_PIN  23    //  Low: attiva motore 0
+#define SELECTOR_1_PIN  25    //  Low: attiva motore 1
+#define SELECTOR_2_PIN  27    //  Low: attiva motore 2
+#define SELECTOR_3_PIN  29    //  Low: attiva motore 3
 
+#define OPEN_BUTTON_PIN     31    //  Low: muove in direzione apertura
+#define CLOSE_BUTTON_PIN    33    //  Low: muove in direzione chiusura
+
+#define ENABLE_PIN  8         // Non usato: mettere ponticello
+
+#define DEBOUNCE_TIME 200     // Intervallo verifica debounce (ms)
 
 //  Valori default per microstepping 1/4
 #define DEFAULT_MAX_POSITION 54000  // Angolo massimo (step: corrisponde a 270°)
@@ -37,5 +47,6 @@
 #define NO_EXE   2    // Comando non eseguibile (motore in moto)
 #define LIMIT    3    // Comando non eseguibile (intervento limite)
 #define ILL_CMD  4    // Comando non riconosciuto
+#define MANUAL   5    // comando illegale in modo manuale
 
 #endif

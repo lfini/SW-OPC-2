@@ -36,13 +36,14 @@
 
 #include <AccelStepper.h>
 #include "config.h"
+#include "manual.h"
 
 #define BUF_LEN 22
 #define REPLY_BUF_LEN 100
 
 #define MOTOR_IF_TYPE AccelStepper::DRIVER
 
-char *ident = "Tappo OPC v. 2.1";
+char *ident = "Tappo OPC v. 3.0";
 
 static char reply_buffer[REPLY_BUF_LEN+1];
 static char command_buffer[BUF_LEN+1];
@@ -58,21 +59,35 @@ AccelStepper motors[] = {AccelStepper(MOTOR_IF_TYPE, M0_PULSE_PIN, M0_DIRECTION_
 
 long max_position[4];
 
+bool manual_on = false;
+
+Manual manual;
+
+static char* command_list = "aimpsvwMAVocgxX";
+
+
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(9600);
-  pinMode(ENABLE_PIN, OUTPUT);    // configure enable pin
+//  pinMode(ENABLE_PIN, OUTPUT);    // configure enable pin
   pinMode(M0_LIMIT_SWITCH_PIN, INPUT_PULLUP);
   pinMode(M1_LIMIT_SWITCH_PIN, INPUT_PULLUP);
   pinMode(M2_LIMIT_SWITCH_PIN, INPUT_PULLUP);
   pinMode(M3_LIMIT_SWITCH_PIN, INPUT_PULLUP);
-  digitalWrite(ENABLE_PIN, LOW);  // enable CNC Shield
+  pinMode(SELECTOR_0_PIN, INPUT_PULLUP);
+  pinMode(SELECTOR_1_PIN, INPUT_PULLUP);
+  pinMode(SELECTOR_2_PIN, INPUT_PULLUP);
+  pinMode(SELECTOR_3_PIN, INPUT_PULLUP);
+  pinMode(OPEN_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(CLOSE_BUTTON_PIN, INPUT_PULLUP);
+//  digitalWrite(ENABLE_PIN, LOW);  // enable CNC Shield
   for(int i=0; i<4; i++) {
     motors[i].setMaxSpeed(DEFAULT_MAX_SPEED);
     motors[i].setAcceleration(DEFAULT_ACCELERATION);
     max_position[i] = DEFAULT_MAX_POSITION;
   };
   ClearCommandBuffer(); 
+  manual.reset();
 };
 
 void GetCommand() {               // Called from within the loop to
@@ -108,7 +123,6 @@ int DigitToInt(char achar) {   // convert digit character in int 0..3
   return val;
 }
 
-static char* command_list = "aimpsvwMAVocgxX";
 
 void ExecCommandInternal() {          // actual command executor
   char cmd = command_buffer[0];
@@ -117,6 +131,10 @@ void ExecCommandInternal() {          // actual command executor
   float fbuf[4];
   switch(cmd) {
     case 'X': {
+      if(manual_on) {
+         Serial.println(MANUAL);
+         return;
+      }
       for(int n=0; n<4; n++) motors[n].stop();
       Serial.println(SUCCESS);
       return;
@@ -175,23 +193,39 @@ void ExecCommandInternal() {          // actual command executor
   switch(cmd) {
     int errcod;
     case 'x': {
+      if(manual_on) {
+         Serial.println(MANUAL);
+         return;
+      }
       motors[n_petal].stop();
       Serial.println(SUCCESS);
       return;
     };
     case 'c': {
+      if(manual_on) {
+         Serial.println(MANUAL);
+         return;
+      }
       long value = -atol(command_buffer+2);
       motors[n_petal].move(value);
       Serial.println(SUCCESS);
       return;
     };
     case 'o': {
+      if(manual_on) {
+         Serial.println(MANUAL);
+         return;
+      }
       long value = atol(command_buffer+2);
       motors[n_petal].move(value);
       Serial.println(SUCCESS);
       return;
     };
     case 'g': {
+      if(manual_on) {
+         Serial.println(MANUAL);
+         return;
+      }
       long value = atol(command_buffer+2);
       if(value < 0 || value > max_position[n_petal]) {
         Serial.println(LIMIT);
@@ -202,6 +236,10 @@ void ExecCommandInternal() {          // actual command executor
       return;
     };
     case '0': {
+      if(manual_on) {
+         Serial.println(MANUAL);
+         return;
+      }
       motors[n_petal].setCurrentPosition(0);
       Serial.println(SUCCESS);
       return;
@@ -236,8 +274,43 @@ void ExecCommand() {              // Execute the command from command buffer,
   };
 };
 
+
 void loop() {
   for(int i=0; i<4; i++) motors[i].run();
+  float speed = motors[0].speed()+motors[1].speed()+motors[2].speed()+motors[3].speed();
+  int what = manual.update(speed);
+
+  int selector = what | 7;
+  what |= what & 7;
+
+  switch(what) {
+    int n_petal;
+    case DO_NOTHING: {
+      break;
+    };
+    case STOP_REQUEST: {
+      for(int i=0; i<4; i++) motors[i].stop();
+      break;
+    };
+    case SET_AUTOMATIC: {
+      manual_on = false;
+      break;
+    };
+    case SET_MANUAL: {
+      manual_on = true;
+      break;
+    };
+    case START_OPEN_REQUEST: {
+      n_petal = selector - 1;
+      motors[n_petal].move(max_position[n_petal]);
+      break;
+    };
+    case START_CLOSE_REQUEST: {
+      n_petal = selector - 1;
+      motors[n_petal].move(0);
+      break;
+    };
+  };
   GetCommand();
   ExecCommand();
 };
