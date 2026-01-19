@@ -9,6 +9,7 @@
 //
 // Cod. Risposta  Descrizione
 // a    x,y,z,a   Accelerazione per i quattro petali
+// f    A/MN      Automatico/manuale+petalo attivo in modo manuale1
 // i    xxxxxxx   Identificazione (numero di versione del firmware)
 // m    x,y,z,a   Angolo max per i quattro petali
 // p    x,y,z,a   Posizione dei 4 petali
@@ -17,7 +18,7 @@
 // w    x,y,z,a   Stato limit switch (1: chiuso, 0: aperto)
 
 
-// Comandi di impostazione valori:
+// Comandi di impostazione valori (NOTA: i petali sono numerati da 1 a 4):
 //
 // Cod. Risposta  Descrizione
 // MNxxx errcod   Imposta valore massimo angolo (in num di step) raggiungibile per petalo N
@@ -43,7 +44,11 @@
 
 #define MOTOR_IF_TYPE AccelStepper::DRIVER
 
-char *ident = "Tappo OPC v. 3.0";
+#ifdef DEBUG
+char *ident = "Tappo OPC v. 3.1 - DEBUG";
+#else
+char *ident = "Tappo OPC v. 3.1";
+#endif
 
 static char reply_buffer[REPLY_BUF_LEN+1];
 static char command_buffer[BUF_LEN+1];
@@ -60,6 +65,7 @@ AccelStepper motors[] = {AccelStepper(MOTOR_IF_TYPE, M0_PULSE_PIN, M0_DIRECTION_
 long max_position[4];
 
 bool manual_on = false;
+int cur_selector = 0;
 
 Manual manual;
 
@@ -80,6 +86,8 @@ void setup() {
   pinMode(SELECTOR_3_PIN, INPUT_PULLUP);
   pinMode(OPEN_BUTTON_PIN, INPUT_PULLUP);
   pinMode(CLOSE_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(MANUAL_MODE_LED_PIN, OUTPUT);
+  digitalWrite(MANUAL_MODE_LED_PIN, LOW);
 //  digitalWrite(ENABLE_PIN, LOW);  // enable CNC Shield
   for(int i=0; i<4; i++) {
     motors[i].setMaxSpeed(DEFAULT_MAX_SPEED);
@@ -176,14 +184,23 @@ void ExecCommandInternal() {          // actual command executor
       Serial.print(lbuf[2]); Serial.print(','); Serial.println(lbuf[3]);
       return;
     };
+    case 'f': {
+      if(manual_on) {
+        Serial.print('M');
+        Serial.println(cur_selector);
+      } else {
+        Serial.println('A');
+      };
+      return;
+    };
     case 'i': {
       Serial.println(ident);
       return;
     };
   };
   
-  int n_petal = DigitToInt(command_buffer[1]); // Convert argument value
-  if(n_petal < 0) {
+  int n_motor = DigitToInt(command_buffer[1])-1; // Convert argument value
+  if(n_motor < 0) {
     if(strchr(command_list, cmd))
       Serial.println(WRONG_ID);
     else
@@ -197,7 +214,7 @@ void ExecCommandInternal() {          // actual command executor
          Serial.println(MANUAL);
          return;
       }
-      motors[n_petal].stop();
+      motors[n_motor].stop();
       Serial.println(SUCCESS);
       return;
     };
@@ -207,7 +224,7 @@ void ExecCommandInternal() {          // actual command executor
          return;
       }
       long value = -atol(command_buffer+2);
-      motors[n_petal].move(value);
+      motors[n_motor].move(value);
       Serial.println(SUCCESS);
       return;
     };
@@ -217,7 +234,7 @@ void ExecCommandInternal() {          // actual command executor
          return;
       }
       long value = atol(command_buffer+2);
-      motors[n_petal].move(value);
+      motors[n_motor].move(value);
       Serial.println(SUCCESS);
       return;
     };
@@ -227,11 +244,11 @@ void ExecCommandInternal() {          // actual command executor
          return;
       }
       long value = atol(command_buffer+2);
-      if(value < 0 || value > max_position[n_petal]) {
+      if(value < 0 || value > max_position[n_motor]) {
         Serial.println(LIMIT);
         return;
       };
-      motors[n_petal].moveTo(value);
+      motors[n_motor].moveTo(value);
       Serial.println(SUCCESS);
       return;
     };
@@ -240,25 +257,25 @@ void ExecCommandInternal() {          // actual command executor
          Serial.println(MANUAL);
          return;
       }
-      motors[n_petal].setCurrentPosition(0);
+      motors[n_motor].setCurrentPosition(0);
       Serial.println(SUCCESS);
       return;
     }
     case 'M': {
       long value = atol(command_buffer+2);
-      max_position[n_petal] = value;
+      max_position[n_motor] = value;
       Serial.println(SUCCESS);
      return;
     };
     case 'A': {
       float accel = atof(command_buffer+2);
-      motors[n_petal].setAcceleration(accel);
+      motors[n_motor].setAcceleration(accel);
       Serial.println(SUCCESS);
       return;
     };
     case 'V': {
       float speedmax = atof(command_buffer+2);
-      motors[n_petal].setMaxSpeed(speedmax);
+      motors[n_motor].setMaxSpeed(speedmax);
       Serial.println(SUCCESS);
       return;
     };
@@ -274,41 +291,64 @@ void ExecCommand() {              // Execute the command from command buffer,
   };
 };
 
+int p_what = 0;
 
 void loop() {
   for(int i=0; i<4; i++) motors[i].run();
   float speed = motors[0].speed()+motors[1].speed()+motors[2].speed()+motors[3].speed();
   int what = manual.update(speed);
 
-  int selector = what | 7;
-  what |= what & 7;
+  if(what != p_what) {
+    p_what = what;
 
-  switch(what) {
-    int n_petal;
-    case DO_NOTHING: {
-      break;
-    };
-    case STOP_REQUEST: {
-      for(int i=0; i<4; i++) motors[i].stop();
-      break;
-    };
-    case SET_AUTOMATIC: {
-      manual_on = false;
-      break;
-    };
-    case SET_MANUAL: {
-      manual_on = true;
-      break;
-    };
-    case START_OPEN_REQUEST: {
-      n_petal = selector - 1;
-      motors[n_petal].move(max_position[n_petal]);
-      break;
-    };
-    case START_CLOSE_REQUEST: {
-      n_petal = selector - 1;
-      motors[n_petal].move(0);
-      break;
+    int selector = what & 0xf;
+    int cmd = what & 0xf0;
+    int n_motor;
+
+#ifdef DEBUG
+    Serial.print("- cmd: "); Serial.println(cmd);  // DBG
+    Serial.print("- sel: "); Serial.println(selector);  // DBG
+#endif
+
+    switch(cmd) {
+      case DO_NOTHING: {
+        break;
+      };
+      case STOP_REQUEST: {
+#ifdef DEBUG
+        Serial.println("- Stop motori");  // DBG
+#endif
+        for(int i=0; i<4; i++) motors[i].stop();
+        break;
+      };
+      case SET_AUTOMATIC: {
+        manual_on = false;
+        digitalWrite(MANUAL_MODE_LED_PIN, LOW);
+        cur_selector = 0;
+        break;
+      };
+      case SET_MANUAL: {
+        manual_on = true;
+        digitalWrite(MANUAL_MODE_LED_PIN, HIGH);
+        cur_selector = selector;
+        break;
+      };
+      case START_OPEN_REQUEST: {
+        n_motor = selector - 1;
+#ifdef DEBUG
+        Serial.print("- apri motore "); Serial.println(n_motor); // DBG
+#endif
+        motors[n_motor].moveTo(max_position[n_motor]);
+        break;
+      };
+      case START_CLOSE_REQUEST: {
+        n_motor = selector - 1;
+#ifdef DEBUG
+        Serial.print("- chiudi motore "); Serial.println(n_motor); // DBG
+#endif
+        motors[n_motor].moveTo(0);
+        break;
+      };
     };
   };
   GetCommand();

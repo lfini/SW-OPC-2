@@ -1,7 +1,8 @@
 #ifndef config_h
 #define config_h
 
-
+#define DEBUG       // commentare per disabilitare modo debug
+		    //
 #define M0_DIRECTION_PIN 5    // asse X
 #define M1_DIRECTION_PIN 6    // asse Y
 #define M2_DIRECTION_PIN 7    // asse Z
@@ -18,17 +19,19 @@
 #define M3_LIMIT_SWITCH_PIN 17
 
 //                            //  Pin per comandi manuali
-#define SELECTOR_0_PIN  23    //  Low: attiva motore 0
-#define SELECTOR_1_PIN  25    //  Low: attiva motore 1
-#define SELECTOR_2_PIN  27    //  Low: attiva motore 2
-#define SELECTOR_3_PIN  29    //  Low: attiva motore 3
+#define SELECTOR_0_PIN  31    //  Low: attiva motore 0
+#define SELECTOR_1_PIN  33    //  Low: attiva motore 1
+#define SELECTOR_2_PIN  35    //  Low: attiva motore 2
+#define SELECTOR_3_PIN  37    //  Low: attiva motore 3
 
-#define OPEN_BUTTON_PIN     31    //  Low: muove in direzione apertura
-#define CLOSE_BUTTON_PIN    33    //  Low: muove in direzione chiusura
+#define OPEN_BUTTON_PIN     39    //  Low: muove in direzione apertura
+#define CLOSE_BUTTON_PIN    41    //  Low: muove in direzione chiusura
+
+#define MANUAL_MODE_LED_PIN 34    //  Led di segnalazione modo manuale
 
 #define ENABLE_PIN  8         // Non usato: mettere ponticello
 
-#define DEBOUNCE_TIME 200     // Intervallo verifica debounce (ms)
+#define DEBOUNCE_TIME 500     // Intervallo verifica debounce (ms)
 
 //  Valori default per microstepping 1/4
 #define DEFAULT_MAX_POSITION 54000  // Angolo massimo (step: corrisponde a 270°)

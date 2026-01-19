@@ -28,7 +28,7 @@ except:                 #pylint: disable=W0702
 import serial
 from serial.tools.list_ports import comports
 
-__version__ = "1.0"
+__version__ = "1.2"
 __author__ = "Luca Fini"
 __date__ = "01/2026"
 
@@ -53,19 +53,20 @@ HELP = """
  a    x,y,z,a   Accelerazione per i quattro petali
  i    xxxxxxx   Identificazione (numero di versione del firmware)
  m    x,y,z,a   Angolo max per i quattro petali
+ o    0/1/2/3/4 Petalo attivo in modo manuale (0: modo automatico)
  p    x,y,z,a   Posizione dei 4 petali
  s    x,y,z,a   Velocità corrente per i quattro petali
  v    x,y,z,a   Velocità max per i quattro petali
  w    x,y,z,a   Stato limit switch: 1=aperto 0=chiuso
 
- Comandi di impostazione valori:
+ Comandi di impostazione valori (NOTA: i petali sono numerati da 1 a 4):
 
  Cod. Risposta  Descrizione
  MNxxx errcod   Imposta valore massimo angolo (in num di step) raggiungibile per petalo N
  ANxxx errcod   Imposta valore accelerazione (steps/sec^2) per petalo N
  VNxxx errcod   Imposta valore velocità massima per petalo N
 
- Comandi di movimento:
+ Comandi di movimento (NOTA: i petali sono numerati da 1 a 4):
 
  Cod. Risposta  Descrizione
  0N    errcod    Imposta posizione corrente come 0
@@ -178,13 +179,18 @@ def send_command(cmd):
     _debug(f"sending command: {tcmd}")
     try:
         GLOB.serial.write(tcmd)
-        line = GLOB.serial.readline()
     except:  # pylint: disable=W0702
-        ret = "9"
-    else:
+        return "9"
+    while True:
+        try:
+            line = GLOB.serial.readline()
+        except:  # pylint: disable=W0702
+            return "9"
         ret = line.decode("utf8").strip()
-    _debug(f"command returns: {ret}")
-    return ret
+        if ret[:1] != "-":
+            _debug(f"command returns: {ret}")
+            return ret
+        print("DBG>", ret[1:])
 
 
 def init_serial(tty):
@@ -247,10 +253,15 @@ def set_log(log_func):
 
 def reply(cmd, msg):
     "interpretazione risposte al comando"
-    ret = msg.split(",")
     match cmd[0]:
         case 'a':
             print("REPLY - Accelerazioni:", msg, "(step/s^2)")
+        case 'f':
+            if msg[0] == "M":
+                mode = f"Manuale (selettore: {msg[1]})"
+            else:
+                mode = "A"
+            print("REPLY - Modo funzionamento:", mode)
         case 'i':
             print("REPLY - Identificazione:", msg)
         case 'm':
@@ -264,7 +275,7 @@ def reply(cmd, msg):
         case 'w':
             print("REPLY - Lim. Switch:", msg, "(1:aperto, 0:chiuso)")
         case _:
-            print("REPLY:", ret, "- Inatteso!")
+            print("REPLY:", msg, "- Inatteso!")
 
 def home_all():
     "Procedura di homing per tutti i petali"

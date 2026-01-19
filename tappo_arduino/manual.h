@@ -3,8 +3,8 @@
 
 class Selector {
   private:
-    int  previous_idx;
-    int  _active;
+    int  p_idx;
+    int  active;
     void set(int n_idx);
 
   public:
@@ -14,32 +14,28 @@ class Selector {
 
 class PushButtons {
   private:
-    int _n_pin_open;
-    int _n_pin_close;
-    int _prev_value;
-    int _value;
+    int p_value;
+    int value;
 
   public:
     PushButtons();
     int update();
 };
 
-// stati per gestione manuale
+// stati per gestione manuale. Il numero di petalo viene introdotto con OR
 
-#define DO_NOTHING            0
-#define STOP_REQUEST          1
-#define SET_AUTOMATIC         2
-#define SET_MANUAL            3
-#define START_OPEN_REQUEST   16  // valore in OR con valore selettore
-#define START_CLOSE_REQUEST  32  // valore in OR con valore selettore
-
-#define OPEN_REQUEST  1
-#define CLOSE_REQUEST 2
+#define DO_NOTHING           0x10  // == 16
+#define STOP_REQUEST         0x20  // == 32
+#define SET_AUTOMATIC        0x30  // == 48
+#define SET_MANUAL           0x40  // == 64
+#define START_OPEN_REQUEST   0x50  // == 80
+#define START_CLOSE_REQUEST  0x60  // == 96
 
 class Manual {
   private:
     int p_selector;
-    int p_button;    
+    int p_button;  
+    bool stop_requested;
     unsigned long next_update;
     Selector selector;
     PushButtons buttons;

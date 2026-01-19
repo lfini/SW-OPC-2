@@ -1,56 +1,54 @@
 #include "manual.h"
 
 Selector::Selector() {   // Stato del commutatore di selezione con "debouncing"
-  previous_idx = 0;
-  _active = 0;
+  p_idx = 0;
+  active = 0;
 };
 
 void Selector::set(int n_idx) {
-  if(n_idx == previous_idx) {
-    _active = n_idx;
+  if(n_idx == p_idx) {
+    active = n_idx;
   } else {
-    previous_idx = n_idx;
+    p_idx = n_idx;
   };
 };
 
 int Selector::update() {
   if(!digitalRead(SELECTOR_0_PIN))
-    set(4);
+    set(1);
   else if(!digitalRead(SELECTOR_1_PIN))
-    set(8);
+    set(2);
   else if(!digitalRead(SELECTOR_2_PIN))
-    set(16);
+    set(3);
   else if(!digitalRead(SELECTOR_3_PIN))
-    set(32);
+    set(4);
   else
     set(0);
-  return _active;
+  return active;
 };
 
 
 PushButtons::PushButtons() {
-  _prev_value = 0;
-  _value = 0;
-  _n_pin_open = OPEN_BUTTON_PIN;
-  _n_pin_close = CLOSE_BUTTON_PIN;
+  p_value = 0;
+  value = 0;
 };
 
-int PushButtons::update() {    // imposta valore: 0 -nessun premuto, 1 - premuto open
+int PushButtons::update() {    // imposta valore: 0 - nessun premuto, 1 - premuto open
                                //                 2 - premuto close
                                // Con debounce
   int next;
   if(!digitalRead(OPEN_BUTTON_PIN))
-    next = OPEN_REQUEST;
+    next = 1;
   else if(!digitalRead(CLOSE_BUTTON_PIN))
-    next = CLOSE_REQUEST;
+    next = 2;
   else
     next = 0;
-  if(next == _prev_value) {
-    _value = next;
+  if(next == p_value) {
+    value = next;
   } else {
-    _prev_value = next;
+    p_value = next;
   }
-  return _value;
+  return value;
 };
 
 
@@ -63,6 +61,7 @@ Manual::Manual() {
 void Manual::reset() {
   p_selector = 0;
   p_button = 0;
+  stop_requested = false;
   next_update = 0;
 };
 
@@ -70,22 +69,36 @@ int Manual::update(float speed) {
   unsigned long now = millis();
   if(now >= next_update) {
     next_update = now + DEBOUNCE_TIME;
+    if(stop_requested) {
+      if(speed > 0.0) return DO_NOTHING;
+      stop_requested = false;
+    }
     int _selector = selector.update();
     int _button = buttons.update();
     if(_selector != p_selector) {           // cambio di stato commutatore
-      if(speed > 0.0) return STOP_REQUEST;  // in moto: richiedi stop
+#ifdef DEBUG
+      Serial.print("- speed: "); Serial.println(speed); // DBG
+#endif
+      if(speed > 0.0) {
+        stop_requested = true;
+        return STOP_REQUEST;  // in moto: richiedi stop
+      };
       p_selector = _selector;
       if(_selector == 0) return SET_AUTOMATIC;
-      return SET_MANUAL;
+      return SET_MANUAL | _selector;
     }; 
 //     questa sezione riguarda il caso di stato selettore immutato
     if(_selector == 0) return DO_NOTHING;      // modo automatico: nessuna operazione richiesta
     if(_button == p_button) return DO_NOTHING; // modo manuale, ma pulsanti invariati: come sopra
 //     questa sezione riguarda il caso di stato pulsanti cambiato in modo manuale
-    if(speed != 0.0) return STOP_REQUEST;      // in moto: richiedi stop
+    if(speed > 0.0) {
+      stop_requested = true;
+      return STOP_REQUEST;      // in moto: richiedi stop
+    };
     p_button = _button;
     if(_button == 1) return START_OPEN_REQUEST | _selector;
     if(_button == 2) return START_CLOSE_REQUEST | _selector;
+    stop_requested = true;
     return STOP_REQUEST;
   };
 };
