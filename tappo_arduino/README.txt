@@ -1,32 +1,30 @@
 Software di controllo per tappo telescopio.
 
-- questa directory contiene il codice del firmware per Arduino.
+- questa directory contiene il codice del firmare per Arduino (AT Mega 2560).
 
-- il file test_tappo.py contiene la proxcedura di test.
+- il file tappo.py /(nella cartella: ../opc) contiene la libreria per
+  il controllo da python con la procedura di test.
 
-Per il test del firmware del controller si possono usare i comandI:
+Per il test base del firmware del controller si può inviare commandi da un
+qualunque emulatore di terminale, ad esempio;:
 
-Linux:  cu -l /dev/ttyACM0 -s 9600
+    Linux:  cu -l /dev/ttyACM0 -s 9600
 
-Windows:
+    Windows:
 
 PINOUT per scheda CNC:
 
 X step/dir = pin 2/5
 Y step/dir = pin 3/6
 Z step/dir = pin 4/7
-A step/dir = pin 12/13 ma bisogna collegare con jumpers D12 e D13 (blu/giallo)
+A step/dir = pin 12/13
 
-ENABLE = pin 8  (abilitabile da software)
+Per abilitare il canale A, bisogna collegare con jumpers D12 e D13 (blu/giallo)
 
-FINE CORSA headers bianco/neri (nero tutto GND):
-X+ = X- = 9
-Y+ = Y- = 10
-Z+ = Z- = 11
-Per il fine corsa A si può usare un pin libero da 14 a 21
+Occorre mettere un ponticello di abilitazione della scheda (accanto al pulsante
+di reset)
 
-NOTA: a quanto capisco i finecorsa devono mandare un segnale positivo ad un limite e negativo
-all'altro (suppong 0 quando siamo a mezza strada). Per questo usa gli ingressi analogici.
 
-Dato che noi abbiamo solo il limit switch in chiusura io utilizzo ingressi digitali
-(14, 15, 16, 17)
+
+
+

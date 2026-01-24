@@ -3,19 +3,20 @@ tappo.py - Funzioni di supporto e test del tappo del telescopio OPC
 
 Uso:
 
-    python tappo.py [-d]        - test comandi generici
+    python tappo.py [-d]         - test comandi generici
 
-    python tappo.py [-d] -ioc   - test procedura complesse
+    python tappo.py [-d] -iIoOcC - test procedura complesse
 
 dove:
 
     -d: attiva debug
 
-    -i: test inizializzazione
-    -o: test inizializzazione + apertura
-    -c: test inizializzazione + apertura + chiusura
+    -i/I: test inizializzazione (I: non tenta homing, per test senza finecorsa)
+    -o/O: test inizializzazione + apertura  (O: non tenta homing)
+    -c/C: test inizializzazione + apertura + chiusura (C: non tenta homing)
 
-NOTA: al termine della procedura complessa selezionata viene attivato il test dei comandi generici
+NOTA: al termine della procedura complessa selezionata viene attivato il test dei
+      comandi generici
 
 """
 
@@ -34,17 +35,21 @@ __date__ = "01/2026"
 
 ################## Parametri - devono corrispondere alle impostazioni nel firmware
 TTY_SPEED = 9600
-ORDINE_APERTURA = [0, 2, 1, 3]
-ORDINE_CHIUSURA = [3, 1, 2, 0]
-
-START_DELAY = 3   # ritardo movimento petali in apertura/chiusura (sec)
+\
+ORDINE_APERTURA = [2, 4, 1, 3]    # N.B.: i petali sono numerati come da documentaz.
+ORDINE_CHIUSURA = [1, 3, 2, 4]    # di Telescopi Italiani
 
 DEMOLTIPLICA_MECCANICA = 90.    # rapporto demoltiplica meccanica
 MICROSTEP = 4                   # Impostazione microstep
 GRADI_STEP = 1.8                # Angolo per singolo step
+
+START_DELAY = 5              # ritardo movimento petali in apertura/chiusura (sec)
+                             # serve ad impedire interferenze fra i petali
+
+WAIT_STOP = 10               # Tempo massimo di attesa dell'arresto (sec)
 ###################################################################################
 
-GRADI_MICROSTEP = 1.8/MICROSTEP/DEMOLTIPLICA_MECCANICA
+GRADI_MICROSTEP = GRADI_STEP/MICROSTEP/DEMOLTIPLICA_MECCANICA
 
 HELP = """
  Comandi di interrogazione:
@@ -53,7 +58,7 @@ HELP = """
  a    x,y,z,a   Accelerazione per i quattro petali
  i    xxxxxxx   Identificazione (numero di versione del firmware)
  m    x,y,z,a   Angolo max per i quattro petali
- o    0/1/2/3/4 Petalo attivo in modo manuale (0: modo automatico)
+ f    0/1/2/3/4 Petalo attivo in modo manuale (0: modo automatico)
  p    x,y,z,a   Posizione dei 4 petali
  s    x,y,z,a   Velocità corrente per i quattro petali
  v    x,y,z,a   Velocità max per i quattro petali
@@ -69,7 +74,7 @@ HELP = """
  Comandi di movimento (NOTA: i petali sono numerati da 1 a 4):
 
  Cod. Risposta  Descrizione
- 0N    errcod    Imposta posizione corrente come 0
+ 0N    errcod    Imposta posizione corrente come 0 per petalo N
  oNxxx errcod    muove petalo N di xxx passi in direzione "apertura"
  cNxxx errcod    muove petalo N di xxx passi in direzione "chiusura"
  gNxxx errcod    muove petalo N a posizione assoluta
@@ -88,39 +93,54 @@ comando al controller del tappo.
 
 SUCCESS = "0"
 
+ERRORS = ["1", "2", "3", "4", "5", "8", "9"]
+
 CODICI_STATO = {
     SUCCESS: "Comando eseguito",
     "1": "Numero petalo errato",
     "2": "Comando non eseguibile con petalo in moto",
     "3": "Superamento limite",
     "4": "Comando non riconosciuto",
+    "5": "Comando non eseguibile in modo manuale",
     "8": "Operazione non conclusa",
     "9": "Controller non connesso",
 }
 
-HOMING_STEP = int(0.25 * GRADI_MICROSTEP + 0.5)
-MAX_HOMING_STEPS = 10
+HOMING_STEPS = int(0.25 * GRADI_MICROSTEP + 0.5)
+
+# Stati
+
+UNKNOWN = "N.D."
+CLOSED = "Chiuso"
+OPEN = "Aperto"
+MOVING = "In movimento"
+
+class CommandError(RuntimeError):
+    "Errore sui comandi"
+    def __init__(self, code, aux=""):
+        if aux:
+            msg = f"[{aux}] {CODICI_STATO[code]}"
+        else:
+            msg = CODICI_STATO[code]
+        super().__init__(msg)
+
 
 class MotorStatus:
-    "Stato di un motore"
-    def __init__(self, my_order):
-        self.my_order = my_order
+    "Controllo e stato di un motore"
+    def __init__(self, order):
+        self.my_id = order + 1
         self.homed = False
         self.last_error = ""
 
-    def _speed0(self, ntryes=0):
+    def _speed0(self, ntry=WAIT_STOP):
         "Attende che il motore sia fermo"
-        while ntryes > 0:
-            ntryes -= 1
+        while ntry > 0:
+            ntry -= 1
             time.sleep(1)
-            ret = send_command("s")
-            if ret in CODICI_STATO:
-                self.error("lettura velocità", ret)
-                return False
-            cur_speed = float(ret.split(",")[self.my_order])
+            ret = send_command_excp("s")
+            cur_speed = float(ret.split(",")[self.my_id])
             if cur_speed == 0.0:
                 return True
-        self.error("stop timeout", "8")
         return False
 
 
@@ -131,30 +151,21 @@ class MotorStatus:
     def home(self):
         "posiziona/verifica petalo 'at home' return False in caso di errore"
         self.last_error = ""
-        steps = MAX_HOMING_STEPS
-        while steps:
-            steps -= 1
-            ret = send_command(f"c{self.my_order}{HOMING_STEP}")
-            if ret != SUCCESS:
-                self.error("step chiusura", ret)
-                return False
-            if not self._speed0(20):
-                return False
-            ret = send_command("w")
-            if ret in CODICI_STATO:
-                self.last_error = CODICI_STATO[ret]
-                return False
-            switches = [int(x) for x in ret.split(",")]
-            if switches[self.my_order] == 1:    # limit switch open. Imposta posizione 0
-                ret = send_command(f"0{self.my_order}")
-                if ret != SUCCESS:
-                    self.last_error = CODICI_STATO[ret]
-                    self.error("imposta posizione 0", ret)
-                    return False
+        self.homed = False
+        ret = send_command_excp("m")
+        max_angle = int(ret.split(",")[self.my_id])
+        while max_angle:
+            max_angle -= HOMING_STEPS
+            ret = send_command_excp(f"c{self.my_id}{HOMING_STEPS}")
+            if not self._speed0():
+                raise CommandError("8", "mancato arresto")
+            ret = send_command_excp("w")
+            switches = ret.split(",")
+            if switches[self.my_id] == "1":    # limit switch open. Imposta posizione 0
+                send_command_excp(f"0{self.my_id}")
                 self.homed = True
-                return True
-        self.error("timeout", "8")
-        return False
+                return
+        raise CommandError("8", "homing")
 
 
 class GLOB:  # pylint: disable=R0903
@@ -164,8 +175,9 @@ class GLOB:  # pylint: disable=R0903
     ident = ""
     motors = [MotorStatus(idx) for idx in range(4)]
     log = print
-    home_all = False
-    open_all = False
+    all_homed = False
+    all_open = False
+    positions = [-1, -1, -1, -1]
 
 def _debug(text):
     "mostra info per debug"
@@ -174,7 +186,7 @@ def _debug(text):
 
 
 def send_command(cmd):
-    "send command to shutter controlleri, Return full reply"
+    "Invia comando al coltrollore e gestisce messaggi di debug 'out of band'"
     tcmd = ("!" + cmd + ":").encode("ascii")
     _debug(f"sending command: {tcmd}")
     try:
@@ -190,11 +202,19 @@ def send_command(cmd):
         if ret[:1] != "-":
             _debug(f"command returns: {ret}")
             return ret
-        print("DBG>", ret[1:])
+        _debug(ret[1:])
+
+
+def send_command_excp(cmd):
+    "Invia comando al controllore e genera excp per errori"
+    ret = send_command(cmd)
+    if ret in ERRORS:
+        raise CommandError(ret, f"cmd: {cmd}")
+    return ret
 
 
 def init_serial(tty):
-    "initialize serial communication. Returns ident string or None"
+    "Inizializza la comunicazione. Riporta la stringa di identificazione"
     _debug(f"Trying: {tty}")
     try:
         GLOB.serial = serial.Serial(tty, TTY_SPEED, timeout=2)
@@ -210,12 +230,12 @@ def init_serial(tty):
     except:  # pylint: disable=W0702
         pass
     GLOB.serial = None
-    return None
+    return ""
 
 
 ################### funzioni per controllo
 def find_tty():
-    "find and open serial line"
+    "Cerca linea USB con controllore e inizializza la comunicazione"
     _debug("Looking for connected controller")
     if sys.platform == "linux":
         template = "tty"
@@ -223,23 +243,20 @@ def find_tty():
         template = "COM"
     else:
         raise RuntimeError(f"Not supported: {sys.platform}")
-    GLOB.init = False
+    GLOB.status = UNKNOWN
     GLOB.serial = None
+    GLOB.tty = ""
+    GLOB.ident = ""
     ports = comports()
-    device = None
-    ident = None
     for port in ports:
         if template in port.description:
-            ident = init_serial(port.device)
-            if ident:
-                device = port.device
-                GLOB.homed = [False] * 4
-                break
-    if ident:
-        _debug(f"controller found on tty: {device}")
-    else:
-        _debug("controller NOT found")
-    return ident
+            GLOB.ident = init_serial(port.device)
+            if GLOB.ident:
+                GLOB.tty = port.device
+                _debug(f"Controller attivo su linea: {GLOB.tty}")
+                return GLOB.ident
+    _debug("Controller NON trovato")
+    return ""
 
 
 def set_debug(enable=True):
@@ -279,27 +296,30 @@ def reply(cmd, msg):
 
 def home_all():
     "Procedura di homing per tutti i petali"
-    GLOB.home_all = False
+    GLOB.all_homed = False
     GLOB.log("Inizio procedura homing")
     for idx in ORDINE_CHIUSURA:
         motor = GLOB.motors[idx]
         GLOB.log(f"Homing petalo {idx}")
-        if not motor.home():
-            GLOB.log(f"Errore homing petalo {idx}: {motor.last_error}")
+        try:
+            motor.home()
+        except CommandError as excp:
+            GLOB.log(f"Errore homing petalo {idx}: {excp}")
             send_command("X")
             return False
-    GLOB.home_all = True
-    GLOB.log("Procedura homing OK")
+    GLOB.status = CLOSED
+    GLOB.log("Procedura homing petalo {idx} OK")
     return True
 
-def initialize():
+def initialize(do_homing=True):
     "initialize connection and set home for all petals"
-    GLOB.ident = find_tty()
-    if not GLOB.ident:
+    if not find_tty():
         GLOB.log("Controllore non connesso")
         return False
     GLOB.log(f"Controllore connesso: {GLOB.ident}")
-    return home_all()
+    if do_homing:
+        return home_all()
+    return True
 
 
 def _wait_sum(sum_pos):
@@ -312,11 +332,12 @@ def _wait_sum(sum_pos):
             GLOB.log(f"Errore lettura posizioni: {CODICI_STATO[ret]}")
             send_command("X")     # stop all petals
             return False
-        cur_diff = sum_pos - sum(int(x) for x in ret.split(","))
+        GLOB.positions = [int(x) for x in ret.split(",")]
+        cur_diff = sum_pos - sum(GLOB.positions)
         if cur_diff == 0:
             break
         if prev_diff is not None and cur_diff == prev_diff:
-            GLOB.log("Errore: qualche motore apparentemente fermo!")
+            GLOB.log("Errore: qualche motore apparentemente bloccato!")
             return False
     GLOB.log("Posizione raggiunta")
     return True
@@ -324,39 +345,41 @@ def _wait_sum(sum_pos):
 
 def open_all():
     "Apertura in ordine corretto di tutti i petali"
-    GLOB.open_all = False
-    if GLOB.home_all:
+    GLOB.all_open = False
+    if GLOB.all_homed:
         ret = send_command("m")
         if ret in CODICI_STATO:
             GLOB.log("Errore lettura pos. max: "+CODICI_STATO[ret])
             return False
         max_pos = [int(x) for x in ret.split(",")]
-        for idx in ORDINE_APERTURA:
+        for nstep, idx in enumerate(ORDINE_APERTURA):
             GLOB.log(f"Apertura petalo: {idx}")
             ret = send_command(f"g{idx}{max_pos[idx]}")
             if ret != SUCCESS:
                 GLOB.log(f"Errore apertura petalo {idx}: {GLOB.motors[idx].last_error}")
                 send_command("X")     # stop all petals
                 return False
-            time.sleep(START_DELAY)
+            if nstep == 1:
+                time.sleep(START_DELAY)
         max_sum = sum(max_pos)
-        GLOB.open_all = _wait_sum(max_sum)
-        return GLOB.open_all
-    GLOB.log("Errore: procedura di homing non completata")
+        GLOB.all_open = _wait_sum(max_sum)
+        return GLOB.all_open
+    GLOB.log("Errore: stato patali ignoto")
     return False
 
 
 def close_all():
     "Chiusura in ordine corretto di tutti i petali"
-    if GLOB.open_all:
-        for idx in ORDINE_CHIUSURA:
+    if GLOB.all_open:
+        for nstep, idx in enumerate(ORDINE_CHIUSURA):
             GLOB.log(f"Chiusura petalo: {idx}")
             ret = send_command(f"g{idx}0")
             if ret != SUCCESS:
                 GLOB.log(f"Errore chiusura petalo {idx}: {GLOB.motors[idx].last_error}")
                 send_command("X")
                 return False
-            time.sleep(START_DELAY)
+            if nstep == 1:
+                time.sleep(START_DELAY)
         status = _wait_sum(0)
         if status:
             return home_all()
@@ -368,9 +391,13 @@ def get_position():
     "Legge posizioni petali"
     ret = send_command("p")
     if ret in CODICI_STATO:
-        GLOB.log("Errore lettura posizioni")
-        return (-1, -1, -1, -1)
+        GLOB.log(f"Errore lettura posizioni: {CODICI_STATO[ret]}")
+        return [-1, -1, -1, -1]
     return (int(x) for x in ret.split(","))
+
+
+##############################
+#  Funzioni per test
 
 def test_comandi(init=True):
     "test comandi elementari"
@@ -387,8 +414,8 @@ def test_comandi(init=True):
     print(WARNING_1)
     while True:
         print()
-        cmd = input("Comando (q: stop, ?/invio: help)? ").strip()
-        if not (cmd) or cmd[:1] == "?":
+        cmd = input("Comando (q: stop, <invio>: help)? ").strip()
+        if not cmd:
             print(HELP)
             continue
         if cmd[:1] == "q":
@@ -400,9 +427,9 @@ def test_comandi(init=True):
             reply(cmd, ret)
 
 
-def test_inizializzazione():
+def test_inizializzazione(do_homing):
     "prova procedura inizializzazione (+ homing)"
-    ret = initialize()
+    ret = initialize(do_homing)
     stat = "OK" if ret else "FALLITO"
     print(f"Test inizializzazione: {stat}")
 
@@ -427,18 +454,36 @@ def main():
     GLOB.debug = "-d" in sys.argv
 
     if "-i" in sys.argv:
-        test_inizializzazione()
+        test_inizializzazione(True)
+        test_comandi(init=False)
+        sys.exit()
+
+    if "-I" in sys.argv:
+        test_inizializzazione(False)
         test_comandi(init=False)
         sys.exit()
 
     if "-o" in sys.argv:
-        test_inizializzazione()
+        test_inizializzazione(True)
+        test_open()
+        test_comandi(init=False)
+        sys.exit()
+
+    if "-O" in sys.argv:
+        test_inizializzazione(False)
         test_open()
         test_comandi(init=False)
         sys.exit()
 
     if "-c" in sys.argv:
-        test_inizializzazione()
+        test_inizializzazione(True)
+        test_open()
+        test_close()
+        test_comandi(init=False)
+        sys.exit()
+
+    if "-C" in sys.argv:
+        test_inizializzazione(False)
         test_open()
         test_close()
         test_comandi(init=False)

@@ -28,7 +28,7 @@
 // Comandi di movimento:
 //
 // Cod. Risposta  Descrizione
-// 0N    errcod    Imposta posizione corrente come 0
+// 0N    errcod    Imposta posizione corrente come 0 per petalo N
 // oNxxx errcod    muove petalo N di xxx passi in direzione "apertura"
 // cNxxx errcod    muove petalo N di xxx passi in direzione "chiusura"
 // gNxxx errcod    muove petalo N a posizione assoluta
@@ -37,7 +37,7 @@
 
 #include <AccelStepper.h>
 #include "config.h"
-#include "manual.h"
+#include "switches.h"
 
 #define BUF_LEN 22
 #define REPLY_BUF_LEN 100
@@ -67,7 +67,7 @@ long max_position[4];
 bool manual_on = false;
 int cur_selector = 0;
 
-Manual manual;
+Switches switches;
 
 static char* command_list = "aimpsvwMAVocgxX";
 
@@ -89,13 +89,14 @@ void setup() {
   pinMode(MANUAL_MODE_LED_PIN, OUTPUT);
   digitalWrite(MANUAL_MODE_LED_PIN, LOW);
 //  digitalWrite(ENABLE_PIN, LOW);  // enable CNC Shield
+
   for(int i=0; i<4; i++) {
     motors[i].setMaxSpeed(DEFAULT_MAX_SPEED);
     motors[i].setAcceleration(DEFAULT_ACCELERATION);
     max_position[i] = DEFAULT_MAX_POSITION;
   };
   ClearCommandBuffer(); 
-  manual.reset();
+  switches.reset();
 };
 
 void GetCommand() {               // Called from within the loop to
@@ -124,64 +125,60 @@ void ClearCommandBuffer() {  // clear command buffer
   command_empty = true;
 };
 
-int DigitToInt(char achar) {   // convert digit character in int 0..3
-                                 // on error returns -1
-  int val = achar-'0';
-  if(val<0 || val>3) val = -1;
-  return val;
-}
-
 
 void ExecCommandInternal() {          // actual command executor
   char cmd = command_buffer[0];
 //Serial.println(command_buffer);
-  long lbuf[4];
-  float fbuf[4];
   switch(cmd) {
     case 'X': {
       if(manual_on) {
          Serial.println(MANUAL);
          return;
-      }
+      };
       for(int n=0; n<4; n++) motors[n].stop();
       Serial.println(SUCCESS);
       return;
     };
     case 'p': {
-      for(int i=0; i<4; i++) lbuf[i] = motors[i].currentPosition();
-      Serial.print(lbuf[0]); Serial.print(','); Serial.print(lbuf[1]); Serial.print(',');
-      Serial.print(lbuf[2]); Serial.print(','); Serial.println(lbuf[3]);
+      Serial.print(motors[0].currentPosition()); Serial.print(','); 
+      Serial.print(motors[1].currentPosition()); Serial.print(',');
+      Serial.print(motors[2].currentPosition()); Serial.print(',');
+      Serial.println(motors[3].currentPosition());
       return;
     };
     case 'w': {
-      Serial.print(digitalRead(M0_LIMIT_SWITCH_PIN)); Serial.print(',');
-      Serial.print(digitalRead(M1_LIMIT_SWITCH_PIN)); Serial.print(',');
-      Serial.print(digitalRead(M2_LIMIT_SWITCH_PIN)); Serial.print(',');
-      Serial.println(digitalRead(M3_LIMIT_SWITCH_PIN));
+      Serial.print(switches.lsw(0)); Serial.print(',');
+      Serial.print(switches.lsw(1)); Serial.print(',');
+      Serial.print(switches.lsw(2)); Serial.print(',');
+      Serial.println(switches.lsw(3));
       return;
     };
     case 's': {
-      for(int i=0; i<4; i++) fbuf[i] = motors[i].speed();
-      Serial.print(fbuf[0]); Serial.print(','); Serial.print(fbuf[1]); Serial.print(',');
-      Serial.print(fbuf[2]); Serial.print(','); Serial.println(fbuf[3]);
+      Serial.print(motors[0].speed()); Serial.print(','); 
+      Serial.print(motors[1].speed()); Serial.print(',');
+      Serial.print(motors[2].speed()); Serial.print(','); 
+      Serial.println(motors[3].speed());
       return;
     };
     case 'v': {
-      for(int i=0; i<4; i++) fbuf[i] = motors[i].maxSpeed();
-      Serial.print(fbuf[0]); Serial.print(','); Serial.print(fbuf[1]); Serial.print(',');
-      Serial.print(fbuf[2]); Serial.print(','); Serial.println(fbuf[3]);
+      Serial.print(motors[0].maxSpeed()); Serial.print(','); 
+      Serial.print(motors[1].maxSpeed()); Serial.print(',');
+      Serial.print(motors[2].maxSpeed()); Serial.print(','); 
+      Serial.println(motors[3].maxSpeed());
       return;
     };
     case 'a': {
-      for(int i=0; i<4; i++) fbuf[i] = motors[i].acceleration();
-      Serial.print(fbuf[0]); Serial.print(','); Serial.print(fbuf[1]); Serial.print(',');
-      Serial.print(fbuf[2]); Serial.print(','); Serial.println(fbuf[3]);
+      Serial.print(motors[0].acceleration()); Serial.print(','); 
+      Serial.print(motors[1].acceleration()); Serial.print(',');
+      Serial.print(motors[2].acceleration()); Serial.print(','); 
+      Serial.println(motors[3].acceleration());
       return;
     };
     case 'm': {
-      for(int i=0; i<4; i++) lbuf[i] = max_position[i];
-      Serial.print(lbuf[0]); Serial.print(','); Serial.print(lbuf[1]); Serial.print(',');
-      Serial.print(lbuf[2]); Serial.print(','); Serial.println(lbuf[3]);
+      Serial.print(max_position[0]); Serial.print(','); 
+      Serial.print(max_position[1]); Serial.print(',');
+      Serial.print(max_position[2]); Serial.print(','); 
+      Serial.println(max_position[3]);
       return;
     };
     case 'f': {
@@ -199,8 +196,8 @@ void ExecCommandInternal() {          // actual command executor
     };
   };
   
-  int n_motor = DigitToInt(command_buffer[1])-1; // Convert argument value
-  if(n_motor < 0) {
+  int n_motor = command_buffer[1]-'1';    // Convert argument value
+  if(n_motor < 0 || n_motor > 3) {
     if(strchr(command_list, cmd))
       Serial.println(WRONG_ID);
     else
@@ -296,8 +293,7 @@ int p_what = 0;
 void loop() {
   for(int i=0; i<4; i++) motors[i].run();
   float speed = motors[0].speed()+motors[1].speed()+motors[2].speed()+motors[3].speed();
-  int what = manual.update(speed);
-
+  int what = switches.update(speed);
   if(what != p_what) {
     p_what = what;
 

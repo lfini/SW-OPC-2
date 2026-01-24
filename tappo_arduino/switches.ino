@@ -1,4 +1,4 @@
-#include "manual.h"
+#include "switches.h"
 
 Selector::Selector() {   // Stato del commutatore di selezione con "debouncing"
   p_idx = 0;
@@ -27,6 +27,31 @@ int Selector::update() {
   return active;
 };
 
+LimitSwitch::LimitSwitch() {
+  mypin = 0;
+  p_value = 0;
+  value = 0;
+};
+
+LimitSwitch::LimitSwitch(int pin) {
+  mypin = pin;
+  p_value = 0;
+  value = 0;
+};
+
+void LimitSwitch::reset() {
+   p_value = 0;
+   value = 0;
+};
+
+void LimitSwitch::update() {
+  int val = digitalRead(mypin);
+  if(val == p_value)
+    value = val;
+  else
+    p_value = val;
+}
+
 
 PushButtons::PushButtons() {
   p_value = 0;
@@ -52,23 +77,29 @@ int PushButtons::update() {    // imposta valore: 0 - nessun premuto, 1 - premut
 };
 
 
-Manual::Manual() {
+Switches::Switches() {
   selector = Selector();
   buttons = PushButtons();
+  limit_switches[0] = LimitSwitch(M0_LIMIT_SWITCH_PIN);
+  limit_switches[1] = LimitSwitch(M1_LIMIT_SWITCH_PIN);
+  limit_switches[2] = LimitSwitch(M2_LIMIT_SWITCH_PIN);
+  limit_switches[3] = LimitSwitch(M3_LIMIT_SWITCH_PIN);
   reset();
 };
 
-void Manual::reset() {
+void Switches::reset() {
   p_selector = 0;
   p_button = 0;
   stop_requested = false;
   next_update = 0;
+  for(int i=0; i<4; i++) limit_switches[i].reset();
 };
 
-int Manual::update(float speed) {
+int Switches::update(float speed) {
   unsigned long now = millis();
   if(now >= next_update) {
     next_update = now + DEBOUNCE_TIME;
+    for(int i=0; i<4; i++) limit_switches[i].update();
     if(stop_requested) {
       if(speed > 0.0) return DO_NOTHING;
       stop_requested = false;
@@ -101,4 +132,8 @@ int Manual::update(float speed) {
     stop_requested = true;
     return STOP_REQUEST;
   };
+};
+
+int Switches::lsw(int idx) {
+   return limit_switches[idx].value;
 };
