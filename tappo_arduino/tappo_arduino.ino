@@ -8,13 +8,13 @@
 // Comandi di interrogazione:
 //
 // Cod. Risposta  Descrizione
-// a    x,y,z,a   Accelerazione per i quattro petali
+// a    x,y,z,a   Accelerazione per i quattro petali (step/s^2)
 // f    A/MN      Automatico/manuale+petalo attivo in modo manuale1
 // i    xxxxxxx   Identificazione (numero di versione del firmware)
-// m    x,y,z,a   Angolo max per i quattro petali
-// p    x,y,z,a   Posizione dei 4 petali
-// s    x,y,z,a   Velocità corrente per i quattro petali
-// v    x,y,z,a   Velocità max per i quattro petali
+// m    x,y,z,a   Angolo max per i quattro petali (num. step)
+// p    x,y,z,a   Posizione dei 4 petali (num. step)
+// s    x,y,z,a   Velocità corrente per i quattro petali (step/s)
+// v    x,y,z,a   Velocità max per i quattro petali (step/s)
 // w    x,y,z,a   Stato limit switch (1: chiuso, 0: aperto)
 
 
@@ -69,7 +69,7 @@ int cur_selector = 0;
 
 Switches switches;
 
-static char* command_list = "aimpsvwMAVocgxX";
+static char* command_list = "afimpsvwMAV0ocgxX";
 
 
 void setup() {
@@ -292,8 +292,9 @@ int p_what = 0;
 
 void loop() {
   for(int i=0; i<4; i++) motors[i].run();
-  float speed = motors[0].speed()+motors[1].speed()+motors[2].speed()+motors[3].speed();
-  int what = switches.update(speed);
+  bool moving = (motors[0].speed()!=0.0) || (motors[1].speed()!=0.0) ||
+                (motors[2].speed()!=0.0) || (motors[3].speed()!=0.0);
+  int what = switches.update(moving);
   if(what != p_what) {
     p_what = what;
 
@@ -302,8 +303,8 @@ void loop() {
     int n_motor;
 
 #ifdef DEBUG
-    Serial.print("- cmd: "); Serial.println(cmd);  // DBG
-    Serial.print("- sel: "); Serial.println(selector);  // DBG
+    Serial.print("# cmd: "); Serial.println(cmd);  // DBG
+    Serial.print("# sel: "); Serial.println(selector);  // DBG
 #endif
 
     switch(cmd) {
@@ -312,7 +313,7 @@ void loop() {
       };
       case STOP_REQUEST: {
 #ifdef DEBUG
-        Serial.println("- Stop motori");  // DBG
+        Serial.println("# Stop motori");  // DBG
 #endif
         for(int i=0; i<4; i++) motors[i].stop();
         break;
@@ -332,7 +333,7 @@ void loop() {
       case START_OPEN_REQUEST: {
         n_motor = selector - 1;
 #ifdef DEBUG
-        Serial.print("- apri motore "); Serial.println(n_motor); // DBG
+        Serial.print("# apri petalo "); Serial.println(n_motor); // DBG
 #endif
         motors[n_motor].moveTo(max_position[n_motor]);
         break;
@@ -340,7 +341,7 @@ void loop() {
       case START_CLOSE_REQUEST: {
         n_motor = selector - 1;
 #ifdef DEBUG
-        Serial.print("- chiudi motore "); Serial.println(n_motor); // DBG
+        Serial.print("# chiudi petalo "); Serial.println(n_motor); // DBG
 #endif
         motors[n_motor].moveTo(0);
         break;

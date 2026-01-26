@@ -60,7 +60,7 @@ class Switches {  // Raccoglie tutti i dispositivi di tipo switch (selettore,
   public:
     Switches();
     void reset(); 
-    int update(float speed);  // da chiamare da loop()
+    int update(bool moving);  // da chiamare da loop()
     int lsw(int id);          // legge valore fine corsa dato
 };
 

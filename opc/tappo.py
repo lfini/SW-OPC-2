@@ -29,7 +29,7 @@ except:                 #pylint: disable=W0702
 import serial
 from serial.tools.list_ports import comports
 
-__version__ = "1.2"
+__version__ = "1.3"
 __author__ = "Luca Fini"
 __date__ = "01/2026"
 
@@ -199,10 +199,10 @@ def send_command(cmd):
         except:  # pylint: disable=W0702
             return "9"
         ret = line.decode("utf8").strip()
-        if ret[:1] != "-":
+        if ret[:1] != "#":
             _debug(f"command returns: {ret}")
             return ret
-        _debug(ret[1:])
+        print("A.DBG>", ret[1:])
 
 
 def send_command_excp(cmd):

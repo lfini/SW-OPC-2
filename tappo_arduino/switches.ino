@@ -95,22 +95,22 @@ void Switches::reset() {
   for(int i=0; i<4; i++) limit_switches[i].reset();
 };
 
-int Switches::update(float speed) {
+int Switches::update(bool moving) {
   unsigned long now = millis();
   if(now >= next_update) {
     next_update = now + DEBOUNCE_TIME;
     for(int i=0; i<4; i++) limit_switches[i].update();
     if(stop_requested) {
-      if(speed > 0.0) return DO_NOTHING;
+      if(moving) return DO_NOTHING;
       stop_requested = false;
     }
     int _selector = selector.update();
     int _button = buttons.update();
     if(_selector != p_selector) {           // cambio di stato commutatore
 #ifdef DEBUG
-      Serial.print("- speed: "); Serial.println(speed); // DBG
+      Serial.print("# speed: "); Serial.println(speed); // DBG
 #endif
-      if(speed > 0.0) {
+      if(moving) {
         stop_requested = true;
         return STOP_REQUEST;  // in moto: richiedi stop
       };
@@ -122,7 +122,7 @@ int Switches::update(float speed) {
     if(_selector == 0) return DO_NOTHING;      // modo automatico: nessuna operazione richiesta
     if(_button == p_button) return DO_NOTHING; // modo manuale, ma pulsanti invariati: come sopra
 //     questa sezione riguarda il caso di stato pulsanti cambiato in modo manuale
-    if(speed > 0.0) {
+    if(moving) {
       stop_requested = true;
       return STOP_REQUEST;      // in moto: richiedi stop
     };

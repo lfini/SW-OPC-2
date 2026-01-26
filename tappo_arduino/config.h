@@ -1,7 +1,7 @@
 #ifndef config_h
 #define config_h
 
-#define DEBUG       // commentare per disabilitare modo debug
+// #define DEBUG       // commentare per disabilitare modo debug
 		    //
 #define M0_DIRECTION_PIN 5    // asse X
 #define M1_DIRECTION_PIN 6    // asse Y

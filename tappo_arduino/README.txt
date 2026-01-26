@@ -5,8 +5,8 @@ Software di controllo per tappo telescopio.
 - il file tappo.py /(nella cartella: ../opc) contiene la libreria per
   il controllo da python con la procedura di test.
 
-Per il test base del firmware del controller si può inviare commandi da un
-qualunque emulatore di terminale, ad esempio;:
+Per il test base del firmware del controller si può inviare commandi dalla
+console di Arduino IDE o tramite un qualunque emulatore di terminale, ad esempio;:
 
     Linux:  cu -l /dev/ttyACM0 -s 9600
 
