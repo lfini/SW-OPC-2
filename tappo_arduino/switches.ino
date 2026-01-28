@@ -1,11 +1,22 @@
 #include "switches.h"
 
-Selector::Selector() {   // Stato del commutatore di selezione con "debouncing"
+/*
+   supporto per il controllo dei dispositivi elettro-meccanici: microswitch di
+   fine-corsa, commutatore di selezione motore manuale, e pulsanti per il
+   movimento manuale.
+
+   Nota: il debouncing richiede che i metodi update() delle classi seguenti
+         vengano chiamate a intervalli opportuni (es: 200 millisec).
+         La temporizzazione è implementata all'interno della classe Switches
+*/
+
+// class Selector:  stato del commutatore di selezione con "debouncing"
+Selector::Selector() {
   p_idx = 0;
   active = 0;
 };
 
-void Selector::set(int n_idx) {
+void Selector::set(int n_idx) {  // Aggiorna valore se uguale al precedente
   if(n_idx == p_idx) {
     active = n_idx;
   } else {
@@ -13,7 +24,7 @@ void Selector::set(int n_idx) {
   };
 };
 
-int Selector::update() {
+int Selector::update() {     // da chiamare periodicamente
   if(!digitalRead(SELECTOR_0_PIN))
     set(1);
   else if(!digitalRead(SELECTOR_1_PIN))
@@ -27,6 +38,7 @@ int Selector::update() {
   return active;
 };
 
+// class LimitSwitch:  stato di un microswitch di fine-corsa con "debouncing"
 LimitSwitch::LimitSwitch() {
   mypin = 0;
   p_value = 0;
@@ -53,13 +65,19 @@ void LimitSwitch::update() {
 }
 
 
+// class PushButtons:  stato congiunto dei due pulsanti di movimento manuale
+//                     con "debouncing"
+
+//                     Lo stato assume i seguenti valori:
+//                     0 - nessun premuto,  1 - premuto apri,  2 - premuto chiudi
+
 PushButtons::PushButtons() {
   p_value = 0;
   value = 0;
 };
 
-int PushButtons::update() {    // imposta valore: 0 - nessun premuto, 1 - premuto open
-                               //                 2 - premuto close
+int PushButtons::update() {    //
+                               //             
                                // Con debounce
   int next;
   if(!digitalRead(OPEN_BUTTON_PIN))
@@ -77,6 +95,7 @@ int PushButtons::update() {    // imposta valore: 0 - nessun premuto, 1 - premut
 };
 
 
+// class Switches:  stato congiunto di tutti i dispositivi elettromeccanici
 Switches::Switches() {
   selector = Selector();
   buttons = PushButtons();
@@ -95,9 +114,11 @@ void Switches::reset() {
   for(int i=0; i<4; i++) limit_switches[i].reset();
 };
 
-int Switches::update(bool moving) {
+int Switches::update(bool moving) {  // aggiornamento stato. Viene chiamato ad ogni
+                                     // ciclo del loop(), la temporizzazione
+                                     // è implementata internamente
   unsigned long now = millis();
-  if(now >= next_update) {
+  if(now >= next_update) {           // controllo temporizzazione
     next_update = now + DEBOUNCE_TIME;
     for(int i=0; i<4; i++) limit_switches[i].update();
     if(stop_requested) {
@@ -107,9 +128,11 @@ int Switches::update(bool moving) {
     int _selector = selector.update();
     int _button = buttons.update();
     if(_selector != p_selector) {           // cambio di stato commutatore
+
 #ifdef DEBUG
       Serial.print("# speed: "); Serial.println(speed); // DBG
 #endif
+
       if(moving) {
         stop_requested = true;
         return STOP_REQUEST;  // in moto: richiedi stop
@@ -118,22 +141,32 @@ int Switches::update(bool moving) {
       if(_selector == 0) return SET_AUTOMATIC;
       return SET_MANUAL | _selector;
     }; 
+
 //     questa sezione riguarda il caso di stato selettore immutato
-    if(_selector == 0) return DO_NOTHING;      // modo automatico: nessuna operazione richiesta
-    if(_button == p_button) return DO_NOTHING; // modo manuale, ma pulsanti invariati: come sopra
+    if(_selector == 0) return DO_NOTHING;      // modo automatico: nessuna operazione
+                                               // richiesta
+    if(_button == p_button) return DO_NOTHING; // modo manuale, ma pulsanti invariati:
+                                               // come sopra
+
 //     questa sezione riguarda il caso di stato pulsanti cambiato in modo manuale
-    if(moving) {
+    if(moving) {       // stato cambiato durante un movimento: richeista di stop
       stop_requested = true;
-      return STOP_REQUEST;      // in moto: richiedi stop
+      return STOP_REQUEST;
     };
     p_button = _button;
-    if(_button == 1) return START_OPEN_REQUEST | _selector;
-    if(_button == 2) return START_CLOSE_REQUEST | _selector;
+
+    if(_button == 1)      // richiesta apertura
+      return START_OPEN_REQUEST | _selector;
+
+    if(_button == 2)     // richiesta chiusura
+      return START_CLOSE_REQUEST | _selector;
+
+    // Nessun pulsante premuto: richiesta di stop
     stop_requested = true;
     return STOP_REQUEST;
   };
 };
 
-int Switches::lsw(int idx) {
+int Switches::lsw(int idx) {   // richiesta stato di limit switch
    return limit_switches[idx].value;
 };
