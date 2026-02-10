@@ -7,6 +7,8 @@ Uso:
 
     python tappo.py [-d] -iIoOcC - test procedura complesse
 
+    python tappo.py [-d] -s      - stress test
+
 dove:
 
     -d: attiva debug
@@ -22,6 +24,8 @@ NOTA: al termine della procedura complessa selezionata viene attivato il test de
 
 import sys
 import time
+import signal
+
 try:
     import readline     #pylint: disable=W0611
 except:                 #pylint: disable=W0702
@@ -91,9 +95,26 @@ comando al controller del tappo.
 *****************************************************
 """
 
+STRESS_ERROR = """
+La procedura di stress test deve iniziare
+con i petali in posizione 0
+"""
+
+STRESS_WARN = """
+Inizio procedura di stress test. I motori verranno azionati
+fino alla posizione verticale nell'ordine previsto.
+
+La procedura termina dopo ilo numnero di cicli impostati,
+e può essere interrotta con Ctrl-C
+"""
+
+END_ON_CTRLC = """
+Procedura di stress test interrotta con Ctrl-C
+"""
+
 SUCCESS = "0"
 
-ERRORS = ["1", "2", "3", "4", "5", "8", "9"]
+ERRORS = "1234589"
 
 CODICI_STATO = {
     SUCCESS: "Comando eseguito",
@@ -102,6 +123,7 @@ CODICI_STATO = {
     "3": "Superamento limite",
     "4": "Comando non riconosciuto",
     "5": "Comando non eseguibile in modo manuale",
+    "7": "Posizione petali anomala",
     "8": "Operazione non conclusa",
     "9": "Controller non connesso",
 }
@@ -149,12 +171,17 @@ class MotorStatus:
         self.last_error = f"{spec} - {CODICI_STATO[errcod]}"
 
     def home(self):
-        "posiziona/verifica petalo 'at home' return False in caso di errore"
+        "posiziona/verifica petalo 'at home'"
         self.last_error = ""
         self.homed = False
         ret = send_command_excp("m")
         max_angle = int(ret.split(",")[self.my_id])
+        GLOB.home_goon = True
         while max_angle:
+            if not GLOB.home_goon:
+                raise CommandError("8", "stop su richiesta")
+            if wrong_position():
+                raise CommandError("8", "posizione petali anomala")
             max_angle -= HOMING_STEPS
             ret = send_command_excp(f"c{self.my_id}{HOMING_STEPS}")
             if not self._speed0():
@@ -164,9 +191,9 @@ class MotorStatus:
             if switches[self.my_id] == "1":    # limit switch open. Imposta posizione 0
                 send_command_excp(f"0{self.my_id}")
                 self.homed = True
+                GLOB.positions[self.my_id] = 0
                 return
         raise CommandError("8", "homing")
-
 
 class GLOB:  # pylint: disable=R0903
     "global variables"
@@ -178,6 +205,9 @@ class GLOB:  # pylint: disable=R0903
     all_homed = False
     all_open = False
     positions = [-1, -1, -1, -1]
+    stress_goon = False
+    home_goon = False
+
 
 def _debug(text):
     "mostra info per debug"
@@ -294,9 +324,32 @@ def reply(cmd, msg):
         case _:
             print("REPLY:", msg, "- Inatteso!")
 
+# Le seguenti funzioni supportano le operazioni in modo asincrono ############
+def stop_homing():
+    "Interrompe procedura di homing"
+    GLOB.home_goon = False
+
+def get_positions():
+    "Legge posizioni con operazioni in corso"
+    return GLOB.positions
+
+def wrong_position():
+    """
+    Controlla che i petali non siano in posizione anomala per l'homing.
+    Return: True se la posizione è errata
+    """
+    ret = send_command_excp("w")
+    swtc = ret.split(",")
+    set1_open = (swtc[0] == "0") or (swtc[2] == "0")    # Almeno uno dei petali che devono
+                                                        # chiudersi per primi, è aperto
+    set2_closed = (swtc[1] == "1") or (swtc[3] == "1")  # Almeno uno dei petali che devono
+                                                        # chiudersi per secondi, è chiuso
+    return set1_open and set2_closed
+
 def home_all():
     "Procedura di homing per tutti i petali"
     GLOB.all_homed = False
+    GLOB.positions = [-1, -1, -1, -1]
     GLOB.log("Inizio procedura homing")
     for idx in ORDINE_CHIUSURA:
         motor = GLOB.motors[idx]
@@ -312,7 +365,7 @@ def home_all():
     return True
 
 def initialize(do_homing=True):
-    "initialize connection and set home for all petals"
+    "initialize connection and (optionally) set home for all petals"
     if not find_tty():
         GLOB.log("Controllore non connesso")
         return False
@@ -387,13 +440,15 @@ def close_all():
     GLOB.log("Errore: petali non aperti")
     return False
 
-def get_position():
+def read_position():
     "Legge posizioni petali"
     ret = send_command("p")
     if ret in CODICI_STATO:
         GLOB.log(f"Errore lettura posizioni: {CODICI_STATO[ret]}")
-        return [-1, -1, -1, -1]
-    return (int(x) for x in ret.split(","))
+        ret = [-1, -1, -1, -1]
+    ret = [int(x) for x in ret.split(",")]
+    GLOB.position = ret
+    return ret
 
 
 ##############################
@@ -445,6 +500,91 @@ def test_close():
     stat = "OK" if ret else "FALLITO"
     print(f"Test chiusura petali: {stat}")
 
+def sleep_ctrlc(secs, oper):
+    "Attende secs secondi o Ctrl-C"
+    while secs:
+        secs -= 1
+        if not GLOB.stress_goon:
+            return
+        time.sleep(1)
+        print(f" - {oper}. Posizione petali:", read_position())
+
+def stress_cycle(num):            #pylint: disable=R0911
+    "esegue un ciclo di stress"
+    pos = read_position()
+    if pos != [0, 0, 0, 0]:
+        print(STRESS_ERROR)
+        return False
+    print(f"Inizio ciclo apertura {num}. Posizione petali:", pos)
+    send_command_excp("g220000")
+    send_command_excp("g420000")
+    sleep_ctrlc(10, "apertura")
+    if not GLOB.stress_goon:
+        return False
+    send_command_excp("g120000")
+    send_command_excp("g320000")
+    sumpos = 0
+    while sumpos < 80000:
+        if not GLOB.stress_goon:
+            return False
+        time.sleep(1)
+        pos = read_position()
+        print(" - apertura. Posizione petali:", pos)
+        sumpos = sum(pos)
+    sleep_ctrlc(2, "fine apertura")
+    if not GLOB.stress_goon:
+        return False
+    print(f"Inizio ciclo chiusura {num}. Posizione petali:", pos)
+    send_command_excp("g10")
+    send_command_excp("g30")
+    sleep_ctrlc(10, "chiusura")
+    if not GLOB.stress_goon:
+        return False
+    send_command_excp("g40")
+    send_command_excp("g20")
+    sumpos = 1000
+    while sumpos > 0:
+        if not GLOB.stress_goon:
+            return False
+        time.sleep(1)
+        pos = read_position()
+        print(" - chiusura. Posizione petali:", pos)
+        sumpos = sum(pos)
+    sleep_ctrlc(2, "fine chiusura")
+    if not GLOB.stress_goon:
+        return False
+    return True
+
+
+def stop_request(*_):
+    "Handler oper Ctrl-C"
+    print("Ricevuto Ctrl-C")
+    send_command_excp("X")
+    GLOB.stress_goon = False
+
+
+def stress_test():
+    "procedura per muovere a lungo i motori"
+    print(STRESS_WARN)
+    ans = input("Numero cicli? ")
+    try:
+        remains = int(ans)
+    except ValueError:
+        remains = 0
+    if remains == 0:
+        return
+    initialize(do_homing=False)
+    GLOB.stress_goon = True
+    num_cyc = 0
+    while remains > 0:
+        remains -= 1
+        num_cyc += 1
+        if not GLOB.stress_goon:
+            print(END_ON_CTRLC)
+            break
+        if not stress_cycle(num_cyc):
+            break
+
 
 def main():
     "test comandi elementari"
@@ -487,6 +627,11 @@ def main():
         test_open()
         test_close()
         test_comandi(init=False)
+        sys.exit()
+
+    if "-s" in sys.argv:
+        signal.signal(signal.SIGINT, stop_request)
+        stress_test()
         sys.exit()
 
     test_comandi()
