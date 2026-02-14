@@ -5,19 +5,10 @@ Uso:
 
     python tappo.py [-d]         - test comandi generici
 
-    python tappo.py [-d] -iIoOcC - test procedura complesse
+    python tappo.py [-d] -c      - test completo
 
-    python tappo.py [-d] -s      - stress test
 
-dove:
-
-    -d: attiva debug
-
-    -i/I: test inizializzazione (I: non tenta homing, per test senza finecorsa)
-    -o/O: test inizializzazione + apertura  (O: non tenta homing)
-    -c/C: test inizializzazione + apertura + chiusura (C: non tenta homing)
-
-NOTA: al termine della procedura complessa selezionata viene attivato il test dei
+NOTA: al termine della procedura selezionata viene attivato il test dei
       comandi generici
 
 """
@@ -25,6 +16,9 @@ NOTA: al termine della procedura complessa selezionata viene attivato il test de
 import sys
 import time
 import signal
+from enum import StrEnum, Enum
+from contextlib import AbstractContextManager
+from threading import Thread, Lock
 
 try:
     import readline     #pylint: disable=W0611
@@ -33,24 +27,23 @@ except:                 #pylint: disable=W0702
 import serial
 from serial.tools.list_ports import comports
 
-__version__ = "1.3"
+__version__ = "2.1"
 __author__ = "Luca Fini"
-__date__ = "01/2026"
+__date__ = "02/2026"
 
 ################## Parametri - devono corrispondere alle impostazioni nel firmware
 TTY_SPEED = 9600
-\
-ORDINE_APERTURA = [2, 4, 1, 3]    # N.B.: i petali sono numerati come da documentaz.
-ORDINE_CHIUSURA = [1, 3, 2, 4]    # di Telescopi Italiani
+
+ORDINE_APERTURA = [(2, 4), (1, 3)]    # N.B.: i petali sono numerati come da documentaz.
+ORDINE_CHIUSURA = [(1, 3), (2, 4)]    # di Telescopi Italiani
 
 DEMOLTIPLICA_MECCANICA = 90.    # rapporto demoltiplica meccanica
 MICROSTEP = 4                   # Impostazione microstep
 GRADI_STEP = 1.8                # Angolo per singolo step
 
-START_DELAY = 5              # ritardo movimento petali in apertura/chiusura (sec)
+START_DELAY = 8              # ritardo movimento petali in apertura/chiusura (sec)
                              # serve ad impedire interferenze fra i petali
 
-WAIT_STOP = 10               # Tempo massimo di attesa dell'arresto (sec)
 ###################################################################################
 
 GRADI_MICROSTEP = GRADI_STEP/MICROSTEP/DEMOLTIPLICA_MECCANICA
@@ -87,64 +80,129 @@ HELP = """
 """
 
 WARNING_1 = """
-****************************************************
-Attenzione il programma consente di mandare qualunque
-comando al controller del tappo.
-
-           USARE CON CAUTELA!
-*****************************************************
-"""
-
-STRESS_ERROR = """
-La procedura di stress test deve iniziare
-con i petali in posizione 0
-"""
-
-STRESS_WARN = """
-Inizio procedura di stress test. I motori verranno azionati
-fino alla posizione verticale nell'ordine previsto.
-
-La procedura termina dopo ilo numnero di cicli impostati,
-e può essere interrotta con Ctrl-C
-"""
-
-END_ON_CTRLC = """
-Procedura di stress test interrotta con Ctrl-C
+***********************************************************
+*  Attenzione il programma consente di mandare qualunque  *
+*  comando al controller del tappo.                       *
+*                                                         *
+*             USARE CON CAUTELA!                          *
+***********************************************************
 """
 
 SUCCESS = "0"
+WRONG_NUM = "1"
+MOVING = "2"
+OVERLIMIT = "3"
+CMD_UNKN = "4"
+M_MODE = "5"
 
-ERRORS = "1234589"
+INTERRUPT = "6"
+WRONG_POS = "7"
+NOT_CONN = "8"
+UNSPEC_ERR = "9"
 
-CODICI_STATO = {
+CTRL_ERRORS = "12345"  # Gli errori da 0 a 5 sono generati dal controllore
+
+TABELLA_ERRORI = {
     SUCCESS: "Comando eseguito",
-    "1": "Numero petalo errato",
-    "2": "Comando non eseguibile con petalo in moto",
-    "3": "Superamento limite",
-    "4": "Comando non riconosciuto",
-    "5": "Comando non eseguibile in modo manuale",
-    "7": "Posizione petali anomala",
-    "8": "Operazione non conclusa",
-    "9": "Controller non connesso",
+    WRONG_NUM: "Numero petalo errato",
+    MOVING: "Comando non eseguibile con petalo in moto",
+    OVERLIMIT: "Superamento limite",
+    CMD_UNKN: "Comando non riconosciuto",
+    M_MODE: "Comando non eseguibile in modo manuale",
+
+    INTERRUPT: "Operazione interrotta su richiesta",
+    WRONG_POS: "Posizione petali anomala",
+    NOT_CONN: "Controller non connesso",
+    UNSPEC_ERR: "Errore generico",
 }
 
 HOMING_STEPS = int(0.25 * GRADI_MICROSTEP + 0.5)
 
 # Stati
 
-UNKNOWN = "N.D."
-CLOSED = "Chiuso"
-OPEN = "Aperto"
-MOVING = "In movimento"
+class GlobalStatus(StrEnum):
+    "definizione stati della chiusura"
+    TRANSITION = "..."
+    UNCONNECTED = "Non connesso"
+    UNKNOWN = "N.D."
+    CLOSED = "Chiuso"
+    OPEN = "Aperto"
+    HOMING = "Homing in corso"
+    OPENING = "Apertura in corso"
+    CLOSING = "Chiusura in corso"
+    ERROR = "Errore"
 
-class CommandError(RuntimeError):
-    "Errore sui comandi"
-    def __init__(self, code, aux=""):
-        if aux:
-            msg = f"[{aux}] {CODICI_STATO[code]}"
-        else:
-            msg = CODICI_STATO[code]
-        super().__init__(msg)
+class Oper(Enum):
+    "operazioni selezionabili"
+    HOMING = 1
+    OPEN = 2
+    CLOSE = 3
+
+class GLOB:  # pylint: disable=R0903
+    "global variables"
+    debug = False
+    serial = None
+    ident = ""
+    motors = []
+    log = print
+
+    status = GlobalStatus.UNCONNECTED
+    thread = None
+    positions = [-1, -1, -1, -1]
+    goon = False
+    mutex = Lock()
+
+
+def mysleep(delay):
+    "Attende numero di secondi dato o Ctrl_C"
+    while delay>0:
+        if not GLOB.goon:
+            return INTERRUPT
+        time.sleep(1)
+        ret = send_command("p")
+        if ret in CTRL_ERRORS:
+            return ret
+        with GLOB.mutex:
+            GLOB.positions = [int(x) for x in ret.split(",")]
+        delay -= 1
+    return SUCCESS
+
+
+def speed0():
+    "Attende che i motori siano tutti fermi"
+    while True:
+        if not GLOB.goon:
+            return INTERRUPT
+        ret = send_command("p")
+        time.sleep(1)
+        if ret in CTRL_ERRORS:
+            return ret
+        with GLOB.mutex:
+            GLOB.positions = [int(x) for x in ret.split(",")]
+        time.sleep(1)
+        ret = send_command("s")
+        if ret in CTRL_ERRORS:
+            return ret
+        tot_speed = sum((float(x) for x in ret.split(",")))
+        if tot_speed == 0.0:
+            return SUCCESS
+    return False
+
+def wait_sum(sum_pos):
+    "Attende raggiungimento della somma di posizioni data"
+    while True:         # Controllo raggiungimento posizione aperto
+        if not GLOB.goon:
+            return INTERRUPT
+        time.sleep(2)
+        ret = send_command("p")
+        if ret in CTRL_ERRORS:
+            return ret
+        with GLOB.mutex:
+            GLOB.positions = [int(x) for x in ret.split(",")]
+        cur_diff = sum_pos - sum(GLOB.positions)
+        if cur_diff == 0:
+            break
+    return SUCCESS
 
 
 class MotorStatus:
@@ -152,62 +210,61 @@ class MotorStatus:
     def __init__(self, order):
         self.my_id = order + 1
         self.homed = False
-        self.last_error = ""
-
-    def _speed0(self, ntry=WAIT_STOP):
-        "Attende che il motore sia fermo"
-        while ntry > 0:
-            ntry -= 1
-            time.sleep(1)
-            ret = send_command_excp("s")
-            cur_speed = float(ret.split(",")[self.my_id])
-            if cur_speed == 0.0:
-                return True
-        return False
+        self.max_pos = None
 
 
-    def error(self, spec, errcod):
-        "Genera stringa di errore"
-        self.last_error = f"{spec} - {CODICI_STATO[errcod]}"
-
-    def home(self):
+    def home(self):           #pylint: disable=R0911
         "posiziona/verifica petalo 'at home'"
-        self.last_error = ""
         self.homed = False
-        ret = send_command_excp("m")
-        max_angle = int(ret.split(",")[self.my_id])
-        GLOB.home_goon = True
-        while max_angle:
-            if not GLOB.home_goon:
-                raise CommandError("8", "stop su richiesta")
-            if wrong_position():
-                raise CommandError("8", "posizione petali anomala")
-            max_angle -= HOMING_STEPS
-            ret = send_command_excp(f"c{self.my_id}{HOMING_STEPS}")
-            if not self._speed0():
-                raise CommandError("8", "mancato arresto")
-            ret = send_command_excp("w")
+        if self.max_pos is None:
+            ret = send_command("m")
+            if ret in CTRL_ERRORS:
+                return ret
+            self.max_pos = int(ret.split(",")[self.my_id-1])
+        GLOB.goon = True
+        angle_span = self.max_pos
+        while angle_span:
+            if not GLOB.goon:
+                return INTERRUPT
+            if (ret := wrong_position()) != SUCCESS:
+                return ret
+            angle_span -= HOMING_STEPS
+            ret = send_command(f"c{self.my_id}{HOMING_STEPS}")
+            if ret in CTRL_ERRORS:
+                return ret
+            if (ret := speed0()) != SUCCESS:
+                return ret
+            ret = send_command("w")
+            if ret in CTRL_ERRORS:
+                return ret
             switches = ret.split(",")
-            if switches[self.my_id] == "1":    # limit switch open. Imposta posizione 0
-                send_command_excp(f"0{self.my_id}")
+            if switches[self.my_id-1] == "1":    # limit switch open. Imposta posizione 0
+                send_command(f"0{self.my_id}")
                 self.homed = True
-                GLOB.positions[self.my_id] = 0
-                return
-        raise CommandError("8", "homing")
+                with GLOB.mutex:
+                    GLOB.positions[self.my_id-1] = 0
+                return SUCCESS
+        return UNSPEC_ERR
 
-class GLOB:  # pylint: disable=R0903
-    "global variables"
-    debug = False
-    serial = None
-    ident = ""
-    motors = [MotorStatus(idx) for idx in range(4)]
-    log = print
-    all_homed = False
-    all_open = False
-    positions = [-1, -1, -1, -1]
-    stress_goon = False
-    home_goon = False
+    def command_open(self):
+        "Manda comando di apertura completa"
+        if not self.homed:
+            return UNSPEC_ERR
+        return send_command(f"g{self.my_id}{self.max_pos}")
 
+    def command_close(self):
+        "manda commando di chiusura del petalo"
+        if not self.homed:
+            return UNSPEC_ERR
+        return send_command(f"g{self.my_id}0")
+
+
+class FakeMutex(AbstractContextManager):     #pylint: disable=R0903
+    "emulatore mutex per uso non threaded"
+    def __exit__(self, *_):
+        ...
+
+GLOB.motors = [MotorStatus(idx) for idx in range(4)]
 
 def _debug(text):
     "mostra info per debug"
@@ -222,25 +279,17 @@ def send_command(cmd):
     try:
         GLOB.serial.write(tcmd)
     except:  # pylint: disable=W0702
-        return "9"
+        return NOT_CONN
     while True:
         try:
             line = GLOB.serial.readline()
         except:  # pylint: disable=W0702
-            return "9"
+            return NOT_CONN
         ret = line.decode("utf8").strip()
         if ret[:1] != "#":
             _debug(f"command returns: {ret}")
             return ret
         print("A.DBG>", ret[1:])
-
-
-def send_command_excp(cmd):
-    "Invia comando al controllore e genera excp per errori"
-    ret = send_command(cmd)
-    if ret in ERRORS:
-        raise CommandError(ret, f"cmd: {cmd}")
-    return ret
 
 
 def init_serial(tty):
@@ -249,7 +298,7 @@ def init_serial(tty):
     try:
         GLOB.serial = serial.Serial(tty, TTY_SPEED, timeout=2)
     except:  # pylint: disable=W0702
-        return None
+        return ""
     time.sleep(2)  # wait controller setup
     _debug("Serial connected")
     ident = send_command("i")
@@ -266,14 +315,14 @@ def init_serial(tty):
 ################### funzioni per controllo
 def find_tty():
     "Cerca linea USB con controllore e inizializza la comunicazione"
-    _debug("Looking for connected controller")
+    _debug("Ricerca controllore attivo")
+    GLOB.status = GlobalStatus.UNCONNECTED
     if sys.platform == "linux":
         template = "tty"
     elif sys.platform == "win32":
         template = "COM"
     else:
-        raise RuntimeError(f"Not supported: {sys.platform}")
-    GLOB.status = UNKNOWN
+        raise RuntimeError(f"Piattaforma non supportata: {sys.platform}")
     GLOB.serial = None
     GLOB.tty = ""
     GLOB.ident = ""
@@ -283,7 +332,7 @@ def find_tty():
             GLOB.ident = init_serial(port.device)
             if GLOB.ident:
                 GLOB.tty = port.device
-                _debug(f"Controller attivo su linea: {GLOB.tty}")
+                _debug(f"Controllore attivo su linea: {GLOB.tty}")
                 return GLOB.ident
     _debug("Controller NON trovato")
     return ""
@@ -327,7 +376,7 @@ def reply(cmd, msg):
 # Le seguenti funzioni supportano le operazioni in modo asincrono ############
 def stop_homing():
     "Interrompe procedura di homing"
-    GLOB.home_goon = False
+    GLOB.goon = False
 
 def get_positions():
     "Legge posizioni con operazioni in corso"
@@ -336,136 +385,167 @@ def get_positions():
 def wrong_position():
     """
     Controlla che i petali non siano in posizione anomala per l'homing.
-    Return: True se la posizione è errata
+    Return: Codice errore o SUCCESS se la posizione è corretta
     """
-    ret = send_command_excp("w")
+    ret = send_command("w")
+    if ret in CTRL_ERRORS:
+        return ret
     swtc = ret.split(",")
     set1_open = (swtc[0] == "0") or (swtc[2] == "0")    # Almeno uno dei petali che devono
                                                         # chiudersi per primi, è aperto
     set2_closed = (swtc[1] == "1") or (swtc[3] == "1")  # Almeno uno dei petali che devono
                                                         # chiudersi per secondi, è chiuso
-    return set1_open and set2_closed
+    ret = UNSPEC_ERR if set1_open and set2_closed else SUCCESS
+    return ret
 
-def home_all():
+def _home_all():
     "Procedura di homing per tutti i petali"
-    GLOB.all_homed = False
-    GLOB.positions = [-1, -1, -1, -1]
     GLOB.log("Inizio procedura homing")
-    for idx in ORDINE_CHIUSURA:
-        motor = GLOB.motors[idx]
+    with GLOB.mutex:
+        GLOB.positions = [-1, -1, -1, -1]
+        GLOB.status = GlobalStatus.HOMING
+    for idx in ORDINE_CHIUSURA[0]+ORDINE_CHIUSURA[1]:
+        motor = GLOB.motors[idx-1]
         GLOB.log(f"Homing petalo {idx}")
-        try:
-            motor.home()
-        except CommandError as excp:
-            GLOB.log(f"Errore homing petalo {idx}: {excp}")
+        ret = motor.home()
+        if ret != SUCCESS:
+            GLOB.log(f"Errore homing petalo {idx}: {TABELLA_ERRORI[ret]}")
             send_command("X")
-            return False
-    GLOB.status = CLOSED
-    GLOB.log("Procedura homing petalo {idx} OK")
-    return True
+            with GLOB.mutex:
+                GLOB.status = GlobalStatus.ERROR
+            return
+        GLOB.log(f"Procedura homing petalo {idx} OK")
+    with GLOB.mutex:
+        GLOB.status = GlobalStatus.CLOSED
+    return
 
-def initialize(do_homing=True):
-    "initialize connection and (optionally) set home for all petals"
+def initialize():
+    "apre la connessione con il controllore"
     if not find_tty():
         GLOB.log("Controllore non connesso")
+        GLOB.status = GlobalStatus.UNCONNECTED
         return False
     GLOB.log(f"Controllore connesso: {GLOB.ident}")
-    if do_homing:
-        return home_all()
+    GLOB.status = GlobalStatus.UNKNOWN
     return True
 
 
-def _wait_sum(sum_pos):
-    "Attende raggiungimento della somma di posizioni data"
-    prev_diff = None
-    while True:         # Controllo raggiungimento posizione aperto
-        time.sleep(1)
-        ret = send_command("p")
-        if ret in CODICI_STATO:
-            GLOB.log(f"Errore lettura posizioni: {CODICI_STATO[ret]}")
-            send_command("X")     # stop all petals
-            return False
-        GLOB.positions = [int(x) for x in ret.split(",")]
-        cur_diff = sum_pos - sum(GLOB.positions)
-        if cur_diff == 0:
-            break
-        if prev_diff is not None and cur_diff == prev_diff:
-            GLOB.log("Errore: qualche motore apparentemente bloccato!")
-            return False
-    GLOB.log("Posizione raggiunta")
-    return True
-
-
-def open_all():
+def _open_all():
     "Apertura in ordine corretto di tutti i petali"
-    GLOB.all_open = False
-    if GLOB.all_homed:
-        ret = send_command("m")
-        if ret in CODICI_STATO:
-            GLOB.log("Errore lettura pos. max: "+CODICI_STATO[ret])
-            return False
-        max_pos = [int(x) for x in ret.split(",")]
-        for nstep, idx in enumerate(ORDINE_APERTURA):
-            GLOB.log(f"Apertura petalo: {idx}")
-            ret = send_command(f"g{idx}{max_pos[idx]}")
+    def log_error(npt, code):
+        GLOB.log(f"Errore comando petalo {npt}: {TABELLA_ERRORI[code]}")
+
+    GLOB.log("Richiesta apertura petali")
+    if GLOB.status == GlobalStatus.CLOSED:
+        with GLOB.mutex:
+            GLOB.status = GlobalStatus.OPENING
+        for idx in ORDINE_APERTURA[0]:
+            ret = GLOB.motors[idx-1].command_open()
             if ret != SUCCESS:
-                GLOB.log(f"Errore apertura petalo {idx}: {GLOB.motors[idx].last_error}")
-                send_command("X")     # stop all petals
-                return False
-            if nstep == 1:
-                time.sleep(START_DELAY)
-        max_sum = sum(max_pos)
-        GLOB.all_open = _wait_sum(max_sum)
-        return GLOB.all_open
-    GLOB.log("Errore: stato patali ignoto")
-    return False
+                log_error(idx, ret)
+                return
+        if (ret := mysleep(START_DELAY)) != SUCCESS:
+            GLOB.log("Procedura interrotta su richiesta")
+            with GLOB.mutex:
+                GLOB.status = GlobalStatus.ERROR
+            return
+        for idx in ORDINE_APERTURA[1]:
+            ret = GLOB.motors[idx-1].command_open()
+            if ret != SUCCESS:
+                log_error(idx, ret)
+                return
+        max_sum = sum(GLOB.motors[i].max_pos for i in range(4))
+        if (ret := wait_sum(max_sum)) == SUCCESS:
+            with GLOB.mutex:
+                GLOB.status = GlobalStatus.OPEN
+            GLOB.log("Petali aperti")
+        else:
+            with GLOB.mutex:
+                GLOB.status = GlobalStatus.ERROR
+            GLOB.log(f"Errore apertura petali: {TABELLA_ERRORI[ret]}")
+        return
+    GLOB.log("Errore: apertura petali possibile solo da stato chiuso")
 
 
-def close_all():
+def _close_all():
     "Chiusura in ordine corretto di tutti i petali"
-    if GLOB.all_open:
-        for nstep, idx in enumerate(ORDINE_CHIUSURA):
-            GLOB.log(f"Chiusura petalo: {idx}")
-            ret = send_command(f"g{idx}0")
+    def log_error(npt, code):
+        GLOB.log(f"Errore comando petalo {npt}: {TABELLA_ERRORI[code]}")
+
+    GLOB.log("Richiesta chiusura petali")
+    if GLOB.status == GlobalStatus.OPEN:
+        with GLOB.mutex:
+            GLOB.status = GlobalStatus.CLOSING
+        for idx in ORDINE_CHIUSURA[0]:
+            ret = GLOB.motors[idx-1].command_close()
             if ret != SUCCESS:
-                GLOB.log(f"Errore chiusura petalo {idx}: {GLOB.motors[idx].last_error}")
-                send_command("X")
-                return False
-            if nstep == 1:
-                time.sleep(START_DELAY)
-        status = _wait_sum(0)
-        if status:
-            return home_all()
-        return False
-    GLOB.log("Errore: petali non aperti")
-    return False
+                log_error(idx, ret)
+                return
+        if (ret := mysleep(START_DELAY)) != SUCCESS:
+            GLOB.log("Procedura interrotta su richiesta")
+            with GLOB.mutex:
+                GLOB.status = GlobalStatus.ERROR
+            return
+        for idx in ORDINE_CHIUSURA[1]:
+            ret = GLOB.motors[idx-1].command_close()
+            if ret != SUCCESS:
+                log_error(idx, ret)
+                return
+        if (ret := wait_sum(0)) == SUCCESS:
+            with GLOB.mutex:
+                GLOB.status = GlobalStatus.CLOSED
+            GLOB.log("Petali aperti")
+        else:
+            GLOB.log(f"Errore chiusura petali: {TABELLA_ERRORI[ret]}")
+            with GLOB.mutex:
+                GLOB.status = GlobalStatus.ERROR
+        return
+    GLOB.log("Errore: chiusura petali possibile solo da stato aperto")
+
 
 def read_position():
     "Legge posizioni petali"
     ret = send_command("p")
-    if ret in CODICI_STATO:
-        GLOB.log(f"Errore lettura posizioni: {CODICI_STATO[ret]}")
+    if ret in TABELLA_ERRORI:
+        GLOB.log(f"Errore lettura posizioni: {TABELLA_ERRORI[ret]}")
         ret = [-1, -1, -1, -1]
     ret = [int(x) for x in ret.split(",")]
     GLOB.position = ret
     return ret
 
 
-##############################
+def exec_thread(oper):
+    "Esegue comando in un thread"
+    if oper == Oper.HOMING:
+        GLOB.thread = Thread(target=_home_all)
+    elif oper == Oper.OPEN:
+        GLOB.thread = Thread(target=_open_all)
+    elif oper == Oper.CLOSE:
+        GLOB.thread = Thread(target=_close_all)
+    else:
+        return UNSPEC_ERR
+    GLOB.thread.start()
+    time.sleep(1)      # per assicurarsi che il thread sia in esecuzione
+    return SUCCESS
+
+def exec_check():
+    "controlla stato del thread"
+    with GLOB.mutex:
+        status = GLOB.status
+        positions = GLOB.positions.copy()
+    running = False if GLOB.thread is None else GLOB.thread.is_alive()
+    return running, status, positions
+
+def exec_stop():
+    "rinchiesta di interruzione dell'operazione in corso"
+    GLOB.log("Interruzione su richiesta")
+    send_command("X")
+    GLOB.goon = False
+
 #  Funzioni per test
 
-def test_comandi(init=True):
+def test_comandi():
     "test comandi elementari"
-    if init:
-        print()
-        ident = find_tty()
-        if not ident:
-            print("Errore: controllore non connesso")
-            print()
-            sys.exit()
-        else:
-            print("Controllore connesso:", ident)
-
     print(WARNING_1)
     while True:
         print()
@@ -476,162 +556,77 @@ def test_comandi(init=True):
         if cmd[:1] == "q":
             break
         ret = send_command(cmd)
-        if ret in CODICI_STATO:
-            print("REPLY:", ret, "-", CODICI_STATO[ret])
+        if ret in TABELLA_ERRORI:
+            print("REPLY:", ret, "-", TABELLA_ERRORI[ret])
         else:
             reply(cmd, ret)
 
 
-def test_inizializzazione(do_homing):
-    "prova procedura inizializzazione (+ homing)"
-    ret = initialize(do_homing)
-    stat = "OK" if ret else "FALLITO"
-    print(f"Test inizializzazione: {stat}")
+def test_homing():
+    "Test procedura di homing"
+    exec_thread(Oper.HOMING)
+    running = True
+    while running:
+        time.sleep(1)
+        running, status, positions = exec_check()
+        print(" - Stato:", status, "- Pos.:", *positions)
+    return status == GlobalStatus.CLOSED
 
 def test_open():
     "prova procedura apertura petali"
-    ret = open_all()
-    stat = "OK" if ret else "FALLITO"
-    print(f"Test apertura petali: {stat}")
+    exec_thread(Oper.OPEN)
+    running = True
+    while running:
+        time.sleep(1)
+        running, status, positions = exec_check()
+        print(" - Stato:", status, "- Pos.:", *positions)
+    return GLOB.status == GlobalStatus.OPEN
 
 def test_close():
     "prova procedura apertura petali"
-    ret = close_all()
-    stat = "OK" if ret else "FALLITO"
-    print(f"Test chiusura petali: {stat}")
-
-def sleep_ctrlc(secs, oper):
-    "Attende secs secondi o Ctrl-C"
-    while secs:
-        secs -= 1
-        if not GLOB.stress_goon:
-            return
+    exec_thread(Oper.CLOSE)
+    running = True
+    while running:
         time.sleep(1)
-        print(f" - {oper}. Posizione petali:", read_position())
-
-def stress_cycle(num):            #pylint: disable=R0911
-    "esegue un ciclo di stress"
-    pos = read_position()
-    if pos != [0, 0, 0, 0]:
-        print(STRESS_ERROR)
-        return False
-    print(f"Inizio ciclo apertura {num}. Posizione petali:", pos)
-    send_command_excp("g220000")
-    send_command_excp("g420000")
-    sleep_ctrlc(10, "apertura")
-    if not GLOB.stress_goon:
-        return False
-    send_command_excp("g120000")
-    send_command_excp("g320000")
-    sumpos = 0
-    while sumpos < 80000:
-        if not GLOB.stress_goon:
-            return False
-        time.sleep(1)
-        pos = read_position()
-        print(" - apertura. Posizione petali:", pos)
-        sumpos = sum(pos)
-    sleep_ctrlc(2, "fine apertura")
-    if not GLOB.stress_goon:
-        return False
-    print(f"Inizio ciclo chiusura {num}. Posizione petali:", pos)
-    send_command_excp("g10")
-    send_command_excp("g30")
-    sleep_ctrlc(10, "chiusura")
-    if not GLOB.stress_goon:
-        return False
-    send_command_excp("g40")
-    send_command_excp("g20")
-    sumpos = 1000
-    while sumpos > 0:
-        if not GLOB.stress_goon:
-            return False
-        time.sleep(1)
-        pos = read_position()
-        print(" - chiusura. Posizione petali:", pos)
-        sumpos = sum(pos)
-    sleep_ctrlc(2, "fine chiusura")
-    if not GLOB.stress_goon:
-        return False
-    return True
+        running, status, positions = exec_check()
+        print(" - Stato:", status, "- Pos.:", *positions)
+    return status == GlobalStatus.CLOSED
 
 
 def stop_request(*_):
-    "Handler oper Ctrl-C"
-    print("Ricevuto Ctrl-C")
-    send_command_excp("X")
-    GLOB.stress_goon = False
+    "Handler per Ctrl-C"
+    GLOB.log("Ricevuto Ctrl-C")
+    exec_stop()
 
-
-def stress_test():
-    "procedura per muovere a lungo i motori"
-    print(STRESS_WARN)
-    ans = input("Numero cicli? ")
-    try:
-        remains = int(ans)
-    except ValueError:
-        remains = 0
-    if remains == 0:
-        return
-    initialize(do_homing=False)
-    GLOB.stress_goon = True
-    num_cyc = 0
-    while remains > 0:
-        remains -= 1
-        num_cyc += 1
-        if not GLOB.stress_goon:
-            print(END_ON_CTRLC)
-            break
-        if not stress_cycle(num_cyc):
-            break
-
+SEPARATE = """
+================================================================"""
 
 def main():
-    "test comandi elementari"
+    "operazioni di test"
     if "-h" in sys.argv:
         print(__doc__)
         sys.exit()
     GLOB.debug = "-d" in sys.argv
 
-    if "-i" in sys.argv:
-        test_inizializzazione(True)
-        test_comandi(init=False)
+    GLOB.mutex = FakeMutex()
+    print()
+    ret = initialize()
+    if not ret:
         sys.exit()
 
-    if "-I" in sys.argv:
-        test_inizializzazione(False)
-        test_comandi(init=False)
-        sys.exit()
-
-    if "-o" in sys.argv:
-        test_inizializzazione(True)
-        test_open()
-        test_comandi(init=False)
-        sys.exit()
-
-    if "-O" in sys.argv:
-        test_inizializzazione(False)
-        test_open()
-        test_comandi(init=False)
-        sys.exit()
 
     if "-c" in sys.argv:
-        test_inizializzazione(True)
-        test_open()
-        test_close()
-        test_comandi(init=False)
-        sys.exit()
-
-    if "-C" in sys.argv:
-        test_inizializzazione(False)
-        test_open()
-        test_close()
-        test_comandi(init=False)
-        sys.exit()
-
-    if "-s" in sys.argv:
         signal.signal(signal.SIGINT, stop_request)
-        stress_test()
+        print(SEPARATE)
+        ret = test_homing()
+        if ret:
+            print(SEPARATE)
+            ret = test_open()
+        if ret:
+            print(SEPARATE)
+            test_close()
+        print(SEPARATE)
+        test_comandi()
         sys.exit()
 
     test_comandi()
