@@ -36,14 +36,26 @@ class LimitSwitch {   // Stato limit switch (con debounce)
     void update();
 };
 
+class Magnets {  // Magneti di rilascio
+  private:
+    int mypin[4];
+    unsigned long release_time[4];
+
+  public:
+    Magnets();
+    void activate(int n_petal);
+    void update();
+};
+
 // stati per gestione manuale. Il numero di petalo viene introdotto con OR
 
-#define DO_NOTHING           0x10  // == 16
-#define STOP_REQUEST         0x20  // == 32
-#define SET_AUTOMATIC        0x30  // == 48
-#define SET_MANUAL           0x40  // == 64
-#define START_OPEN_REQUEST   0x50  // == 80
-#define START_CLOSE_REQUEST  0x60  // == 96
+#define DO_NOTHING              0x10  // == 16
+#define STOP_REQUEST            0x20  // == 32
+#define SET_AUTOMATIC           0x30  // == 48
+#define SET_MANUAL              0x40  // == 64
+#define START_OPEN_REQUEST      0x50  // == 80
+#define START_CLOSE_REQUEST     0x60  // == 96
+#define MAGNET_RELEASE_REQUEST  0x70  // == 112
 
 
 class Switches {  // Raccoglie tutti i dispositivi di tipo switch (selettore,

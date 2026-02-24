@@ -1,15 +1,17 @@
 """
-tappo.py - Funzioni di supporto e test del tappo del telescopio OPC
+tappo.py - Funzioni di supporto e test della chiusura del telescopio OPC
 
-Uso:
+Uso per test:
 
-    python tappo.py [-d]         - test comandi generici
+    python tappo.py [-d]      - test comandi generici
 
-    python tappo.py [-d] -c      - test completo
+    python tappo.py [-d] -c   - test completo
+
+    python tappo.py -v        - Mostra versione ed esce
 
 
-NOTA: al termine della procedura selezionata viene attivato il test dei
-      comandi generici
+NOTA: dopo l'esecuzione del test completo viene attivata la modalità
+      di esecuzione comandi generici
 
 """
 
@@ -27,7 +29,7 @@ except:                 #pylint: disable=W0702
 import serial
 from serial.tools.list_ports import comports
 
-__version__ = "2.1"
+__version__ = "2.2"
 __author__ = "Luca Fini"
 __date__ = "02/2026"
 
@@ -72,9 +74,12 @@ HELP = """
 
  Cod. Risposta  Descrizione
  0N    errcod    Imposta posizione corrente come 0 per petalo N
+ d     errcod    Disabilita alimentazione motori
+ e     errcod    Abilita alimentazione motori
  oNxxx errcod    muove petalo N di xxx passi in direzione "apertura"
  cNxxx errcod    muove petalo N di xxx passi in direzione "chiusura"
  gNxxx errcod    muove petalo N a posizione assoluta
+ rN    errcod    Rilascia magnete petalo N
  xN    errcod    Stop (interrompe movimento del..) petalo N
  X     errcod    Stop tutti i petali
 """
@@ -88,17 +93,22 @@ WARNING_1 = """
 ***********************************************************
 """
 
+# Codici di errore generati dal firmware Arduino
 SUCCESS = "0"
 WRONG_NUM = "1"
 MOVING = "2"
 OVERLIMIT = "3"
 CMD_UNKN = "4"
-M_MODE = "5"
+MANUAL_MODE = "5"
+DISABLED = "6"
 
-INTERRUPT = "6"
-WRONG_POS = "7"
-NOT_CONN = "8"
-UNSPEC_ERR = "9"
+
+# Codici di errore esterni
+
+INTERRUPT = "10"
+WRONG_POS = "11"
+NOT_CONN = "12"
+UNSPEC_ERR = "13"
 
 CTRL_ERRORS = "12345"  # Gli errori da 0 a 5 sono generati dal controllore
 
@@ -106,9 +116,10 @@ TABELLA_ERRORI = {
     SUCCESS: "Comando eseguito",
     WRONG_NUM: "Numero petalo errato",
     MOVING: "Comando non eseguibile con petalo in moto",
-    OVERLIMIT: "Superamento limite",
+    OVERLIMIT: "Superamento limite (comando 'g')",
     CMD_UNKN: "Comando non riconosciuto",
-    M_MODE: "Comando non eseguibile in modo manuale",
+    MANUAL_MODE: "Comando non eseguibile in modo manuale",
+    DISABLED: "Driver motori disabilitato",
 
     INTERRUPT: "Operazione interrotta su richiesta",
     WRONG_POS: "Posizione petali anomala",
@@ -147,6 +158,7 @@ class GLOB:  # pylint: disable=R0903
     log = print
 
     status = GlobalStatus.UNCONNECTED
+    max_sum = 0
     thread = None
     positions = [-1, -1, -1, -1]
     goon = False
@@ -416,7 +428,9 @@ def _home_all():
             return
         GLOB.log(f"Procedura homing petalo {idx} OK")
     with GLOB.mutex:
+        GLOB.max_sum = sum(GLOB.motors[i].max_pos for i in range(4))
         GLOB.status = GlobalStatus.CLOSED
+        GLOB.sumpos = 0
     return
 
 def initialize():
@@ -454,8 +468,7 @@ def _open_all():
             if ret != SUCCESS:
                 log_error(idx, ret)
                 return
-        max_sum = sum(GLOB.motors[i].max_pos for i in range(4))
-        if (ret := wait_sum(max_sum)) == SUCCESS:
+        if (ret := wait_sum(GLOB.max_sum)) == SUCCESS:
             with GLOB.mutex:
                 GLOB.status = GlobalStatus.OPEN
             GLOB.log("Petali aperti")
@@ -494,7 +507,7 @@ def _close_all():
         if (ret := wait_sum(0)) == SUCCESS:
             with GLOB.mutex:
                 GLOB.status = GlobalStatus.CLOSED
-            GLOB.log("Petali aperti")
+            GLOB.log("Petali chiusi")
         else:
             GLOB.log(f"Errore chiusura petali: {TABELLA_ERRORI[ret]}")
             with GLOB.mutex:
@@ -541,6 +554,10 @@ def exec_stop():
     GLOB.log("Interruzione su richiesta")
     send_command("X")
     GLOB.goon = False
+
+def get_max_sum():
+    "legge la somma totale delle posizioni massime"
+    return GLOB.max_sum
 
 #  Funzioni per test
 
@@ -606,6 +623,11 @@ def main():
     if "-h" in sys.argv:
         print(__doc__)
         sys.exit()
+
+    if "-v" in sys.argv:
+        print(f"tappo.py Vers. {__version__}. {__author__} - {__date__}")
+        sys.exit()
+
     GLOB.debug = "-d" in sys.argv
 
     GLOB.mutex = FakeMutex()
@@ -613,7 +635,6 @@ def main():
     ret = initialize()
     if not ret:
         sys.exit()
-
 
     if "-c" in sys.argv:
         signal.signal(signal.SIGINT, stop_request)

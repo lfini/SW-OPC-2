@@ -33,9 +33,12 @@
 //
 // Cod. Risposta  Descrizione
 // 0N    errcod   Imposta posizione corrente come 0 per petalo N
-// oNxxx errcod   muove petalo N di xxx passi in direzione "apertura"
-// cNxxx errcod   muove petalo N di xxx passi in direzione "chiusura"
-// gNxxx errcod   muove petalo N a posizione assoluta
+// d     errcod   Disabilita alimentazione motori
+// e     errcod   Abilita alimentazione motori
+// oNxxx errcod   Muove petalo N di xxx passi in direzione "apertura"
+// cNxxx errcod   Muove petalo N di xxx passi in direzione "chiusura"
+// gNxxx errcod   Muove petalo N a posizione assoluta
+// rN    errcod   Rilascia magnete petalo N
 // xN    errcod   Stop (interrompe movimento del..) petalo N
 // X     errcod   Stop tutti i petali
 
@@ -47,6 +50,7 @@
 // 3  Comando non eseguibile (posiz. < 0 o posiz. > posiz. max)
 // 4  Comando non riconosciuto
 // 5  Comando non eseguibile in modo manuale
+// 6  Driver motori non attivo
 
 #include <AccelStepper.h>
 #include "config.h"
@@ -58,9 +62,9 @@
 #define MOTOR_IF_TYPE AccelStepper::DRIVER
 
 #ifdef DEBUG
-char *ident = "Tappo OPC v. 3.1 - DEBUG";
+char *ident = "Tappo OPC v. 3.2 - DEBUG";
 #else
-char *ident = "Tappo OPC v. 3.1";
+char *ident = "Tappo OPC v. 3.2";
 #endif
 
 static char reply_buffer[REPLY_BUF_LEN+1];
@@ -70,10 +74,12 @@ int char_ix = 0;
 bool command_ready = false;
 bool command_empty = true;
 
-AccelStepper motors[] = {AccelStepper(MOTOR_IF_TYPE, M0_PULSE_PIN, M0_DIRECTION_PIN),
-                         AccelStepper(MOTOR_IF_TYPE, M1_PULSE_PIN, M1_DIRECTION_PIN),
+AccelStepper motors[] = {AccelStepper(MOTOR_IF_TYPE, M1_PULSE_PIN, M1_DIRECTION_PIN),
                          AccelStepper(MOTOR_IF_TYPE, M2_PULSE_PIN, M2_DIRECTION_PIN),
-                         AccelStepper(MOTOR_IF_TYPE, M3_PULSE_PIN, M3_DIRECTION_PIN)};
+                         AccelStepper(MOTOR_IF_TYPE, M3_PULSE_PIN, M3_DIRECTION_PIN),
+                         AccelStepper(MOTOR_IF_TYPE, M4_PULSE_PIN, M4_DIRECTION_PIN)};
+
+Magnets magnets;
 
 long max_position[4];
 
@@ -82,23 +88,36 @@ int cur_selector = 0;
 
 Switches switches;
 
-static char* command_list = "xocgMAV0";  // elenco comandi che richiedono indice del
-                                         // opetalo
+static char* command_list = "xocgrMAV0";  // elenco comandi che richiedono indice del
+                                          // petalo
 
 void setup() {
   Serial.begin(9600);
-  pinMode(M0_LIMIT_SWITCH_PIN, INPUT_PULLUP);
   pinMode(M1_LIMIT_SWITCH_PIN, INPUT_PULLUP);
   pinMode(M2_LIMIT_SWITCH_PIN, INPUT_PULLUP);
   pinMode(M3_LIMIT_SWITCH_PIN, INPUT_PULLUP);
-  pinMode(SELECTOR_0_PIN, INPUT_PULLUP);
+  pinMode(M4_LIMIT_SWITCH_PIN, INPUT_PULLUP);
   pinMode(SELECTOR_1_PIN, INPUT_PULLUP);
   pinMode(SELECTOR_2_PIN, INPUT_PULLUP);
   pinMode(SELECTOR_3_PIN, INPUT_PULLUP);
+  pinMode(SELECTOR_4_PIN, INPUT_PULLUP);
   pinMode(OPEN_BUTTON_PIN, INPUT_PULLUP);
   pinMode(CLOSE_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(RELEASE_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(MOTOR_POWER_PIN, OUTPUT);
   pinMode(MANUAL_MODE_LED_PIN, OUTPUT);
+
+  pinMode(MAGNET_1_PIN, OUTPUT);
+  pinMode(MAGNET_2_PIN, OUTPUT);
+  pinMode(MAGNET_3_PIN, OUTPUT);
+  pinMode(MAGNET_4_PIN, OUTPUT);
+
   digitalWrite(MANUAL_MODE_LED_PIN, LOW);
+  digitalWrite(MOTOR_POWER_PIN, LOW);
+  digitalWrite(MAGNET_1_PIN, LOW);
+  digitalWrite(MAGNET_2_PIN, LOW);
+  digitalWrite(MAGNET_3_PIN, LOW);
+  digitalWrite(MAGNET_4_PIN, LOW);
 
   for(int i=0; i<4; i++) {
     motors[i].setMaxSpeed(DEFAULT_MAX_SPEED);
@@ -139,16 +158,9 @@ void ClearCommandBuffer() {  // prepara la ricezione di un nuovo comando
 
 void ExecCommandInternal() {          // Esecuzione dei comandi
   char cmd = command_buffer[0];       // estrae primo carattere
+
+                     // Parte 1: Comandi che non richiedono indice petalo né driver ABILITATO
   switch(cmd) {
-    case 'X': {        // Comando: Stop tutti i petali
-      if(manual_on) {  // non ammesso in modo Manuale
-         Serial.println(MANUAL);
-         return;
-      };
-      for(int n=0; n<4; n++) motors[n].stop();
-      Serial.println(SUCCESS);
-      return;
-    };
     case 'p': {      // Comando: legge posizione dei quattro motori
       Serial.print(motors[0].currentPosition()); Serial.print(','); 
       Serial.print(motors[1].currentPosition()); Serial.print(',');
@@ -204,20 +216,56 @@ void ExecCommandInternal() {          // Esecuzione dei comandi
       Serial.println(ident);
       return;
     };
+    case 'e': {   // Comando: aziona relé di alimentazione motori
+      digitalWrite(MOTOR_POWER_PIN, HIGH);
+      Serial.println(SUCCESS);
+      return;
+    };
+  };
+
+                     // Parte 2: Comandi che non richiedono indice petalo ma driver ABILITATO
+  if(!digitalRead(MOTOR_POWER_PIN) {     // Controllo driver abilitato
+    Serial.println(DISABLED);
+    return;
+  }
+
+  switch(cmd) {
+    case 'X': {        // Comando: Stop tutti i petali
+      if(manual_on) {  // non ammesso in modo Manuale
+         Serial.println(MANUAL);
+         return;
+      };
+      for(int n=0; n<4; n++) motors[n].stop();
+      Serial.println(SUCCESS);
+      return;
+    };
+    case 'd': {        // Comando: Toglie corrente ai motori
+      if(manual_on) {  // non ammesso in modo Manuale
+         Serial.println(MANUAL);
+         return;
+      };
+      digitalWrite(MOTOR_POWER_PIN, LOW);
+      Serial.println(SUCCESS);
+      return;
+    };
   };
   
+  if(!digitalRead(MOTOR_POWER_PIN) {     // Controllo motori alimentati
+    Serial.println(DISABLED);
+    return;
+  }
+                     // Parte 3: Comandi che richiedono indice petalo ma NON driver ABILITATO
   if(!strchr(command_list, cmd)) {   // controllo validità comando
     Serial.println(ILL_CMD);
     return;
   }
-
-// I comandi seguenti richiedono l'indice del petalo
-
   int n_motor = command_buffer[1]-'1';    // Converte in intero indice del petalo
   if(n_motor < 0 || n_motor > 3) {        // Controllo indice motore
     Serial.println(WRONG_ID);
     return;
   };
+
+                     // Parte 4: Comandi che richiedono indice petalo e driver ABILITATO
   switch(cmd) {
     int errcod;
     case 'x': {       // Comando: stop motore N
@@ -239,7 +287,7 @@ void ExecCommandInternal() {          // Esecuzione dei comandi
       Serial.println(SUCCESS);
       return;
     };
-    case 'o': {    // Comando: inizia movimento in direzione apertura
+    case 'o': {       // Comando: inizia movimento in direzione apertura
       if(manual_on) { // non valido in modo manuale
          Serial.println(MANUAL);
          return;
@@ -250,7 +298,7 @@ void ExecCommandInternal() {          // Esecuzione dei comandi
       return;
     };
     case 'g': {        // Comando: vai a posizione data
-      if(manual_on) { // non valido in modo manuale
+      if(manual_on) {  // non valido in modo manuale
          Serial.println(MANUAL);
          return;
       }
@@ -260,6 +308,15 @@ void ExecCommandInternal() {          // Esecuzione dei comandi
         return;
       };
       motors[n_motor].moveTo(value);
+      Serial.println(SUCCESS);
+      return;
+    };
+    case 'r': {        // Comando: Rilascia magnete
+      if(manual_on) {  // non valido in modo manuale
+         Serial.println(MANUAL);
+         return;
+      }
+      magnets.activate(n_motor);
       Serial.println(SUCCESS);
       return;
     };
@@ -286,9 +343,8 @@ void ExecCommandInternal() {          // Esecuzione dei comandi
       Serial.println(SUCCESS);
       return;
     };
-    default:
-      Serial.println(ILL_CMD);
   };
+  Serial.println(ILL_CMD);
 };
 
 void ExecCommand() {              // Manda in esecuzione il comando dopo aver
@@ -301,6 +357,11 @@ void ExecCommand() {              // Manda in esecuzione il comando dopo aver
 int p_what = 0;
 
 void loop() {
+  GetCommand();    // aggiorna stato comandi
+  ExecCommand();   // verifica esecuzione comandi
+
+  if(!digitalRead(MOTOR_POWER_PIN) return;     // Controllo motori alimentati
+
   for(int i=0; i<4; i++) motors[i].run();   // aggiorna stato motori
 
   bool moving = (motors[0].speed()!=0.0) || (motors[1].speed()!=0.0) ||
@@ -308,11 +369,13 @@ void loop() {
 
   int what = switches.update(moving);   // aggiorna stato dei comandi manuali
 
+  magnets.update();     // aggiorna stato magneti
+
   if(what != p_what) {     // determina se i comandi manuali hanno cambiato stato
     p_what = what;
                                  // separa componenti dello stato comamndi manuali
     int selector = what & 0xf;   // posizione selettore
-    int cmd = what & 0xf0;       // stato del comlessso comandi manuali
+    int cmd = what & 0xf0;       // stato del complessso comandi manuali
     int n_motor;
 
 #ifdef DEBUG
@@ -346,7 +409,7 @@ void loop() {
       case START_OPEN_REQUEST: {  // Richiesta di apertura manuale
         n_motor = selector - 1;
 #ifdef DEBUG
-        Serial.print("# apri petalo "); Serial.println(n_motor); // DBG
+        Serial.print("# apri petalo "); Serial.println(selector); // DBG
 #endif
         motors[n_motor].moveTo(max_position[n_motor]);
         break;
@@ -354,13 +417,19 @@ void loop() {
       case START_CLOSE_REQUEST: {  // richiesta di chiusura manuale
         n_motor = selector - 1;
 #ifdef DEBUG
-        Serial.print("# chiudi petalo "); Serial.println(n_motor); // DBG
+        Serial.print("# chiudi petalo "); Serial.println(selector); // DBG
 #endif
         motors[n_motor].moveTo(0);
         break;
       };
+      case MAGNET_RELEASE_REQUEST: {  // richiesta di rilascio magnete
+        n_motor = selector - 1;
+#ifdef DEBUG
+        Serial.print("# rilascia magnete "); Serial.println(selector); // DBG
+#endif
+        magnets.activate(n_motor);
+        break;
+      };
     };
   };
-  GetCommand();    // aggiorna stato comandi
-  ExecCommand();   // verifica esecuzione comandi
 };

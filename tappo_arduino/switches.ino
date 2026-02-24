@@ -25,13 +25,13 @@ void Selector::set(int n_idx) {  // Aggiorna valore se uguale al precedente
 };
 
 int Selector::update() {     // da chiamare periodicamente
-  if(!digitalRead(SELECTOR_0_PIN))
+  if(!digitalRead(SELECTOR_1_PIN))
     set(1);
-  else if(!digitalRead(SELECTOR_1_PIN))
-    set(2);
   else if(!digitalRead(SELECTOR_2_PIN))
-    set(3);
+    set(2);
   else if(!digitalRead(SELECTOR_3_PIN))
+    set(3);
+  else if(!digitalRead(SELECTOR_4_PIN))
     set(4);
   else
     set(0);
@@ -84,6 +84,8 @@ int PushButtons::update() {    //
     next = 1;
   else if(!digitalRead(CLOSE_BUTTON_PIN))
     next = 2;
+  else if(!digitalRead(RELEASE_BUTTON_PIN))
+    next = 3;
   else
     next = 0;
   if(next == p_value) {
@@ -99,10 +101,10 @@ int PushButtons::update() {    //
 Switches::Switches() {
   selector = Selector();
   buttons = PushButtons();
-  limit_switches[0] = LimitSwitch(M0_LIMIT_SWITCH_PIN);
-  limit_switches[1] = LimitSwitch(M1_LIMIT_SWITCH_PIN);
-  limit_switches[2] = LimitSwitch(M2_LIMIT_SWITCH_PIN);
-  limit_switches[3] = LimitSwitch(M3_LIMIT_SWITCH_PIN);
+  limit_switches[0] = LimitSwitch(M1_LIMIT_SWITCH_PIN);
+  limit_switches[1] = LimitSwitch(M2_LIMIT_SWITCH_PIN);
+  limit_switches[2] = LimitSwitch(M3_LIMIT_SWITCH_PIN);
+  limit_switches[3] = LimitSwitch(M4_LIMIT_SWITCH_PIN);
   reset();
 };
 
@@ -128,11 +130,6 @@ int Switches::update(bool moving) {  // aggiornamento stato. Viene chiamato ad o
     int _selector = selector.update();
     int _button = buttons.update();
     if(_selector != p_selector) {           // cambio di stato commutatore
-
-#ifdef DEBUG
-      Serial.print("# speed: "); Serial.println(speed); // DBG
-#endif
-
       if(moving) {
         stop_requested = true;
         return STOP_REQUEST;  // in moto: richiedi stop
@@ -161,6 +158,9 @@ int Switches::update(bool moving) {  // aggiornamento stato. Viene chiamato ad o
     if(_button == 2)     // richiesta chiusura
       return START_CLOSE_REQUEST | _selector;
 
+    if(_button == 3)     // richiesta rilascio magnete
+      return MAGNET_RELEASE_REQUEST | _selector;
+
     // Nessun pulsante premuto: richiesta di stop
     stop_requested = true;
     return STOP_REQUEST;
@@ -170,3 +170,25 @@ int Switches::update(bool moving) {  // aggiornamento stato. Viene chiamato ad o
 int Switches::lsw(int idx) {   // richiesta stato di limit switch
    return limit_switches[idx].value;
 };
+
+
+Magnets::Magnets() {
+  mypin[0] = MAGNET_1_PIN;
+  mypin[1] = MAGNET_2_PIN;
+  mypin[2] = MAGNET_3_PIN;
+  mypin[3] = MAGNET_4_PIN;
+  for(int i=0; i<4; i++) release_time[i] = 0;
+};
+
+void Magnets::activate(int idx) {
+  digitalWrite(mypin[idx], HIGH);
+  release_time[idx] = millis()+MAGNET_TIME;
+};
+
+void Magnets::update() {
+  unsigned long now = millis();
+  for(int i=0; i<4; i++)
+    if(now >= release_time[i])
+      digitalWrite(mypin[i], LOW);
+};
+
