@@ -84,8 +84,6 @@ int PushButtons::update() {    //
     next = 1;
   else if(!digitalRead(CLOSE_BUTTON_PIN))
     next = 2;
-  else if(!digitalRead(RELEASE_BUTTON_PIN))
-    next = 3;
   else
     next = 0;
   if(next == p_value) {
@@ -157,9 +155,6 @@ int Switches::update(bool moving) {  // aggiornamento stato. Viene chiamato ad o
 
     if(_button == 2)     // richiesta chiusura
       return START_CLOSE_REQUEST | _selector;
-
-    if(_button == 3)     // richiesta rilascio magnete
-      return MAGNET_RELEASE_REQUEST | _selector;
 
     // Nessun pulsante premuto: richiesta di stop
     stop_requested = true;

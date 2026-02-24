@@ -24,15 +24,15 @@
 // Comandi di impostazione valori (NOTA: i petali sono numerati da 1 a 4):
 //
 // Cod. Risposta  Descrizione
+// 0N    errcod   Imposta posizione corrente come 0 per petalo N
+// ANxxx errcod   Imposta valore accelerazione (steps/sec^2) per petalo N
 // MNxxx errcod   Imposta valore massimo angolo (in num di step) raggiungibile
 //                per petalo N
-// ANxxx errcod   Imposta valore accelerazione (steps/sec^2) per petalo N
 // VNxxx errcod   Imposta valore velocità massima per petalo N
 
 // Comandi di movimento:
 //
 // Cod. Risposta  Descrizione
-// 0N    errcod   Imposta posizione corrente come 0 per petalo N
 // d     errcod   Disabilita alimentazione motori
 // e     errcod   Abilita alimentazione motori
 // oNxxx errcod   Muove petalo N di xxx passi in direzione "apertura"
@@ -103,7 +103,6 @@ void setup() {
   pinMode(SELECTOR_4_PIN, INPUT_PULLUP);
   pinMode(OPEN_BUTTON_PIN, INPUT_PULLUP);
   pinMode(CLOSE_BUTTON_PIN, INPUT_PULLUP);
-  pinMode(RELEASE_BUTTON_PIN, INPUT_PULLUP);
   pinMode(MOTOR_POWER_PIN, OUTPUT);
   pinMode(MANUAL_MODE_LED_PIN, OUTPUT);
 
@@ -224,7 +223,7 @@ void ExecCommandInternal() {          // Esecuzione dei comandi
   };
 
                      // Parte 2: Comandi che non richiedono indice petalo ma driver ABILITATO
-  if(!digitalRead(MOTOR_POWER_PIN) {     // Controllo driver abilitato
+  if(!digitalRead(MOTOR_POWER_PIN)) {     // Controllo driver abilitato
     Serial.println(DISABLED);
     return;
   }
@@ -250,7 +249,7 @@ void ExecCommandInternal() {          // Esecuzione dei comandi
     };
   };
   
-  if(!digitalRead(MOTOR_POWER_PIN) {     // Controllo motori alimentati
+  if(!digitalRead(MOTOR_POWER_PIN)) {     // Controllo motori alimentati
     Serial.println(DISABLED);
     return;
   }
@@ -360,7 +359,7 @@ void loop() {
   GetCommand();    // aggiorna stato comandi
   ExecCommand();   // verifica esecuzione comandi
 
-  if(!digitalRead(MOTOR_POWER_PIN) return;     // Controllo motori alimentati
+  if(!digitalRead(MOTOR_POWER_PIN)) return;     // Controllo motori alimentati
 
   for(int i=0; i<4; i++) motors[i].run();   // aggiorna stato motori
 
@@ -419,15 +418,8 @@ void loop() {
 #ifdef DEBUG
         Serial.print("# chiudi petalo "); Serial.println(selector); // DBG
 #endif
+        magnets.activate(n_motor);   // Attiva magnete di rilascio
         motors[n_motor].moveTo(0);
-        break;
-      };
-      case MAGNET_RELEASE_REQUEST: {  // richiesta di rilascio magnete
-        n_motor = selector - 1;
-#ifdef DEBUG
-        Serial.print("# rilascia magnete "); Serial.println(selector); // DBG
-#endif
-        magnets.activate(n_motor);
         break;
       };
     };

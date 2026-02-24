@@ -66,6 +66,7 @@ HELP = """
  Comandi di impostazione valori (NOTA: i petali sono numerati da 1 a 4):
 
  Cod. Risposta  Descrizione
+ 0N    errcod    Imposta posizione corrente come 0 per petalo N
  MNxxx errcod   Imposta valore massimo angolo (in num di step) raggiungibile per petalo N
  ANxxx errcod   Imposta valore accelerazione (steps/sec^2) per petalo N
  VNxxx errcod   Imposta valore velocità massima per petalo N
@@ -73,7 +74,6 @@ HELP = """
  Comandi di movimento (NOTA: i petali sono numerati da 1 a 4):
 
  Cod. Risposta  Descrizione
- 0N    errcod    Imposta posizione corrente come 0 per petalo N
  d     errcod    Disabilita alimentazione motori
  e     errcod    Abilita alimentazione motori
  oNxxx errcod    muove petalo N di xxx passi in direzione "apertura"

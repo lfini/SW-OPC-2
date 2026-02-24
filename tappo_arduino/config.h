@@ -26,7 +26,6 @@
 
 #define OPEN_BUTTON_PIN     34    //  Low: muove in direzione apertura
 #define CLOSE_BUTTON_PIN    36    //  Low: muove in direzione chiusura
-#define RELEASE_BUTTON_PIN  38    //  Low: attiva impulso rilascio magneti
 
 //                            // Pin per relé
 #define MOTOR_POWER_PIN  41   //  Controllo corrente motori

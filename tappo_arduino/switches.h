@@ -55,7 +55,6 @@ class Magnets {  // Magneti di rilascio
 #define SET_MANUAL              0x40  // == 64
 #define START_OPEN_REQUEST      0x50  // == 80
 #define START_CLOSE_REQUEST     0x60  // == 96
-#define MAGNET_RELEASE_REQUEST  0x70  // == 112
 
 
 class Switches {  // Raccoglie tutti i dispositivi di tipo switch (selettore,
