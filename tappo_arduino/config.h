@@ -3,15 +3,19 @@
 
 //#define DEBUG       // commentare per disabilitare modo debug
 
-#define M1_DIRECTION_PIN 5    // asse X
-#define M2_DIRECTION_PIN 6    // asse Y
-#define M3_DIRECTION_PIN 7    // asse Z
-#define M4_DIRECTION_PIN 13   // asse A
 
-#define M1_PULSE_PIN 2
-#define M2_PULSE_PIN 3
-#define M3_PULSE_PIN 4
-#define M4_PULSE_PIN 12
+#define M1_DIRECTION_PIN 6    // asse Y
+#define M1_PULSE_PIN 3        // asse Y
+
+#define M2_DIRECTION_PIN 7    // asse Z
+#define M2_PULSE_PIN 4        // asse Z
+
+#define M3_DIRECTION_PIN 5    // asse X
+#define M3_PULSE_PIN 2        // asse X
+
+#define M4_DIRECTION_PIN 13   // asse A
+#define M4_PULSE_PIN 12       // asse A
+
 
 #define M1_LIMIT_SWITCH_PIN 14
 #define M2_LIMIT_SWITCH_PIN 15
